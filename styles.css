@@ -627,8 +627,7 @@ input[type="range"].big-slider:active::-webkit-slider-thumb {
 /* ── WIZARD FOOTER ── */
 .wizard-footer {
   padding: 16px 24px;
-  padding-bottom: calc(16px + var(--safe-bottom));
-  flex-shrink: 0;
+  padding-bottom: calc(88px + var(--safe-bottom));
 }
 
 .btn-next {
