@@ -1,18 +1,12 @@
 {
-  "name": "Cookbook PWA",
-  "short_name": "Cookbook",
-  "description": "A lightweight cookbook progressive web app starter.",
+  "name": "Cooking Journal",
+  "short_name": "Cook Journal",
+  "description": "Offline-first personal cooking journal",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#f7fafc",
-  "theme_color": "#2f855a",
+  "background_color": "#121212",
+  "theme_color": "#121212",
   "orientation": "portrait-primary",
-  "icons": [
-    {
-      "src": "icons/icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
-    }
-  ]
+  "icons": [{ "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
 }
