@@ -1,65 +1,53 @@
 /* ─────────────────────────────────────────
-   CookBook — app.js
+   CookBook — app.js v3
+   Light theme · Apple Music rows · No emoji
    ───────────────────────────────────────── */
 
 const DB_NAME = 'cookbookDB';
-const DB_VER  = 2;
+const DB_VER  = 3;
 const STORE   = 'state';
 
-// ── Default state ──
 const DEFAULT_STATE = {
   meals: [],
   modules: [
-    { id: 'protein',   name: 'Protein',   emoji: '🥩', ingredients: [] },
-    { id: 'base',      name: 'Base',      emoji: '🍝', ingredients: [] },
-    { id: 'vegetable', name: 'Vegetable', emoji: '🥦', ingredients: [] },
-    { id: 'sauce',     name: 'Sauce',     emoji: '🫙', ingredients: [] },
+    { id: 'protein',   name: 'Protein',   ingredients: [] },
+    { id: 'base',      name: 'Base',      ingredients: [] },
+    { id: 'vegetable', name: 'Vegetable', ingredients: [] },
+    { id: 'sauce',     name: 'Sauce',     ingredients: [] },
   ],
   shoppingList: [],
 };
 
-let state = JSON.parse(JSON.stringify(DEFAULT_STATE));
-let view  = 'home';
+let state   = JSON.parse(JSON.stringify(DEFAULT_STATE));
+let view    = 'home';
 let sortMode = 'random';
 let searchOpen = false;
-let sortOpen = false;
-let deferredPrompt = null;
+let sortOpen   = false;
 
-// ── Wizard state (not persisted) ──
 let wizard = {
-  active: false,
-  editingId: null,
-  photo: '',       // base64
-  name: '',
-  selections: {},  // { moduleId: [ingr, ...] }
-  rating: 7,
-  note: '',
-  steps: [],       // built dynamically
-  stepIndex: 0,
+  active: false, editingId: null,
+  photo: '', name: '', selections: {}, rating: 7, note: '',
+  steps: [], stepIndex: 0,
 };
 
-/* ─── IndexedDB ─── */
+/* ── DB ── */
 const openDB = () => new Promise((res, rej) => {
   const r = indexedDB.open(DB_NAME, DB_VER);
   r.onupgradeneeded = () => {
-    const db = r.result;
-    if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
+    if (!r.result.objectStoreNames.contains(STORE))
+      r.result.createObjectStore(STORE);
   };
   r.onsuccess = () => res(r.result);
   r.onerror   = () => rej(r.error);
 });
 
 async function loadState() {
-  const db  = await openDB();
-  const tx  = db.transaction(STORE, 'readonly');
+  const db = await openDB();
+  const tx = db.transaction(STORE, 'readonly');
   const req = tx.objectStore(STORE).get('appState');
   return new Promise(ok => {
     req.onsuccess = () => {
-      const saved = req.result;
-      if (saved) {
-        // Merge — keep defaults for missing keys
-        state = Object.assign(JSON.parse(JSON.stringify(DEFAULT_STATE)), saved);
-      }
+      if (req.result) state = Object.assign(JSON.parse(JSON.stringify(DEFAULT_STATE)), req.result);
       ok();
     };
     req.onerror = () => ok();
@@ -73,161 +61,170 @@ async function saveState() {
   return new Promise(ok => { tx.oncomplete = ok; });
 }
 
-/* ─── Helpers ─── */
+/* ── Helpers ── */
 const uid = () => crypto.randomUUID ? crypto.randomUUID() : Date.now() + '' + Math.random();
 
 const ratingColor = r =>
-  r <= 3 ? '#60a5fa' :
-  r <= 6 ? '#fbbf24' :
-  r <= 8 ? '#f97316' : '#ef4444';
+  r <= 3 ? '#60a5fa' : r <= 6 ? '#f59e0b' : r <= 8 ? '#f97316' : '#ef4444';
 
-const ratingLabel = r =>
-  r <= 2 ? 'Terrible' :
-  r <= 4 ? 'Not great' :
-  r <= 6 ? 'Decent' :
-  r <= 8 ? 'Good' :
-  r <= 9 ? 'Great' : '🔥 Perfect';
+const ratingWord = r =>
+  r <= 2 ? 'Terrible' : r <= 4 ? 'Not great' : r <= 6 ? 'Decent' : r <= 8 ? 'Good' : r <= 9 ? 'Great' : 'Perfect';
 
 const shuffle = a => [...a].sort(() => Math.random() - 0.5);
 
-function getModuleById(id) {
-  return state.modules.find(m => m.id === id);
-}
+const getMod = id => state.modules.find(m => m.id === id);
 
 function ingredientsFlat(meal) {
-  const sel = meal.selections || {};
-  return Object.values(sel).flat();
+  return Object.values(meal.selections || {}).flat();
 }
 
-/* ─── Render dispatcher ─── */
+const checkSVG = `<svg viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,6 5,9 10,3"/></svg>`;
+
+const plateSVG = `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round"><circle cx="24" cy="24" r="14"/><circle cx="24" cy="24" r="8"/><line x1="24" y1="6" x2="24" y2="10"/></svg>`;
+
+/* ── Render ── */
 function render() {
   updateNav();
   updateTopbar();
-  if (wizard.active) return; // wizard handles its own rendering
+  if (wizard.active) return;
   const app = document.getElementById('app');
   if (view === 'home')     renderHome(app);
   if (view === 'shopping') renderShopping(app);
   if (view === 'settings') renderSettings(app);
-  if (view === 'add')      startWizard(null);
 }
 
 function updateNav() {
-  document.querySelectorAll('.nav-btn').forEach(b => {
-    b.classList.toggle('active', b.dataset.tab === view);
-  });
+  document.querySelectorAll('.nav-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.tab === view)
+  );
 }
 
 function updateTopbar() {
-  const topbar = document.getElementById('topbar');
-  const homeControls = document.getElementById('home-controls');
-  if (view === 'home') {
-    topbar.classList.remove('hidden');
-    homeControls.classList.remove('hidden');
-  } else if (wizard.active) {
-    topbar.classList.add('hidden');
-    homeControls.classList.add('hidden');
-  } else {
-    topbar.classList.remove('hidden');
-    homeControls.classList.add('hidden');
-  }
+  const tb = document.getElementById('topbar');
+  const hc = document.getElementById('home-controls');
+  if (wizard.active) { tb.classList.add('hidden'); return; }
+  tb.classList.remove('hidden');
+  hc.classList.toggle('hidden', view !== 'home');
 }
 
-/* ─── HOME ─── */
+/* ── HOME ── */
 function renderHome(app) {
   const q = (document.getElementById('search-input')?.value || '').toLowerCase();
-
-  let meals = [...state.meals].filter(m =>
-    !q || m.name.toLowerCase().includes(q)
-  );
-
-  if (sortMode === 'random') meals = shuffle(meals);
-  if (sortMode === 'date')   meals.sort((a, b) => b.date.localeCompare(a.date));
-  if (sortMode === 'rating') meals.sort((a, b) => b.rating - a.rating);
-  if (sortMode === 'az')     meals.sort((a, b) => a.name.localeCompare(b.name));
-
+  let meals = [...state.meals].filter(m => !q || m.name.toLowerCase().includes(q));
   if (!meals.length) {
     app.innerHTML = `
       <div class="empty-state">
-        <span class="empty-icon">🍽️</span>
-        <h2>No meals yet</h2>
-        <p>Tap <strong>+</strong> to log your first meal</p>
+        <div class="empty-icon">
+          <svg width="28" height="28" viewBox="0 0 48 48" fill="none" stroke-width="1.5" stroke-linecap="round">${plateSVG}</svg>
+        </div>
+        <h2>Nothing logged yet</h2>
+        <p>Tap Add to log your first meal</p>
       </div>`;
     return;
   }
 
-  app.innerHTML = `<div class="album-grid">${meals.map(m => {
-    const photo = m.photo || '';
+  const sorted = (arr, mode) => {
+    if (mode === 'random') return shuffle(arr);
+    if (mode === 'date')   return [...arr].sort((a,b) => b.date.localeCompare(a.date));
+    if (mode === 'rating') return [...arr].sort((a,b) => b.rating - a.rating);
+    if (mode === 'az')     return [...arr].sort((a,b) => a.name.localeCompare(b.name));
+    return arr;
+  };
+
+  const cardHTML = m => {
     const color = ratingColor(m.rating);
     return `<div class="album-card" data-id="${m.id}">
-      <div class="album-placeholder">🍽️</div>
-      ${photo ? `<img src="${photo}" alt="${m.name}" loading="lazy" onerror="this.style.display='none'">` : ''}
-      <div class="album-overlay">
+      <div class="album-thumb">
+        ${m.photo
+          ? `<img src="${m.photo}" alt="${m.name}" loading="lazy" onerror="this.style.display='none'">`
+          : `<div class="album-thumb-placeholder">${plateSVG}</div>`}
+        <span class="album-rating-badge" style="background:${color}">${m.rating}/10</span>
+      </div>
+      <div class="album-info">
         <div class="album-name">${m.name}</div>
-        <span class="album-rating" style="background:${color}">${m.rating}/10</span>
+        <div class="album-date">${m.date}</div>
       </div>
     </div>`;
-  }).join('')}</div>`;
+  };
+
+  const rowHTML = (title, items) => {
+    if (!items.length) return '';
+    return `<div class="home-section">
+      <div class="section-header">
+        <span class="section-title">${title}</span>
+        <span class="section-count">${items.length}</span>
+      </div>
+      <div class="cards-row">${items.map(cardHTML).join('')}</div>
+    </div>`;
+  };
+
+  const recent   = sorted([...meals], 'date').slice(0, 10);
+  const topRated = sorted([...meals], 'rating').filter(m => m.rating >= 7).slice(0, 10);
+  const all      = sorted([...meals], sortMode);
+
+  let html = '';
+  if (!q) {
+    html += rowHTML('Recently Added', recent);
+    if (topRated.length) html += rowHTML('Top Rated', topRated);
+    html += rowHTML('All Meals', all);
+  } else {
+    html += rowHTML(`Results for "${q}"`, meals);
+  }
+
+  app.innerHTML = html;
 
   app.querySelectorAll('.album-card').forEach(c =>
     c.addEventListener('click', () => openDetail(c.dataset.id))
   );
 }
 
-/* ─── DETAIL MODAL ─── */
+/* ── DETAIL MODAL ── */
 function openDetail(id) {
   const m = state.meals.find(x => x.id === id);
   if (!m) return;
-
   const overlay = document.getElementById('detail-overlay');
   const modal   = document.getElementById('detail-modal');
   const color   = ratingColor(m.rating);
   const sel     = m.selections || {};
 
-  const modulesHtml = state.modules
-    .filter(mod => (sel[mod.id] || []).length > 0)
-    .map(mod => `
-      <div class="modal-module-row">
-        <span class="modal-module-label">${mod.emoji} ${mod.name}</span>
-        <span>${sel[mod.id].join(', ')}</span>
-      </div>`)
-    .join('');
+  const modsHTML = state.modules
+    .filter(mod => (sel[mod.id] || []).length)
+    .map(mod => `<div class="modal-mod-row">
+      <span class="modal-mod-label">${mod.name}</span>
+      <span>${sel[mod.id].join(', ')}</span>
+    </div>`).join('');
 
   modal.innerHTML = `
+    <div class="modal-drag"></div>
     ${m.photo
       ? `<img class="modal-photo" src="${m.photo}" alt="${m.name}">`
-      : `<div class="modal-photo-placeholder">🍽️</div>`}
+      : `<div class="modal-photo-empty">${plateSVG}</div>`}
     <div class="modal-body">
       <h2 class="modal-title">${m.name}</h2>
       <div class="modal-meta">
-        <span class="modal-date">📅 ${m.date}</span>
-        <span class="album-rating" style="background:${color}">${m.rating}/10</span>
+        <span class="modal-date">${m.date}</span>
+        <span class="rating-badge" style="background:${color}">${m.rating}/10 · ${ratingWord(m.rating)}</span>
       </div>
-      ${modulesHtml ? `<div class="modal-section">
-        <div class="modal-section-title">Ingredients</div>
-        ${modulesHtml}
+      ${modsHTML ? `<div class="modal-block">
+        <div class="modal-block-title">Ingredients</div>
+        ${modsHTML}
       </div>` : ''}
-      ${m.note ? `<div class="modal-section">
-        <div class="modal-section-title">Notes</div>
+      ${m.note ? `<div class="modal-block">
+        <div class="modal-block-title">Notes</div>
         <p class="modal-note">"${m.note}"</p>
       </div>` : ''}
     </div>
     <div class="modal-actions">
-      <button class="btn-edit" id="modal-edit">✏️ Edit</button>
-      <button class="btn-delete" id="modal-delete">🗑</button>
-      <button class="btn-close" id="modal-close">✕</button>
+      <button class="btn-modal" id="md-edit">Edit</button>
+      <button class="btn-modal danger" id="md-del">Delete</button>
+      <button class="btn-modal primary" id="md-close">Close</button>
     </div>`;
 
   overlay.classList.remove('hidden');
-
-  modal.querySelector('#modal-close').onclick  = closeDetail;
   overlay.addEventListener('click', e => { if (e.target === overlay) closeDetail(); });
-
-  modal.querySelector('#modal-edit').onclick = () => {
-    closeDetail();
-    startWizard(id);
-  };
-
-  modal.querySelector('#modal-delete').onclick = async () => {
+  modal.querySelector('#md-close').onclick = closeDetail;
+  modal.querySelector('#md-edit').onclick  = () => { closeDetail(); startWizard(id); };
+  modal.querySelector('#md-del').onclick   = async () => {
     if (!confirm('Delete this meal?')) return;
     state.meals = state.meals.filter(x => x.id !== id);
     await saveState();
@@ -240,15 +237,10 @@ function closeDetail() {
   document.getElementById('detail-overlay').classList.add('hidden');
 }
 
-/* ─── WIZARD ─── */
-function buildWizardSteps() {
-  // Always: photo, name
-  // Then one step per module that has ingredients
-  // Then: rating, note
+/* ── WIZARD ── */
+function buildSteps() {
   const steps = ['photo', 'name'];
-  state.modules.forEach(mod => {
-    if (mod.ingredients.length > 0) steps.push('module:' + mod.id);
-  });
+  state.modules.forEach(mod => { if (mod.ingredients.length) steps.push('mod:' + mod.id); });
   steps.push('rating', 'note');
   return steps;
 }
@@ -256,7 +248,7 @@ function buildWizardSteps() {
 function startWizard(editId) {
   wizard.active    = true;
   wizard.editingId = editId;
-  wizard.steps     = buildWizardSteps();
+  wizard.steps     = buildSteps();
   wizard.stepIndex = 0;
 
   if (editId) {
@@ -269,11 +261,8 @@ function startWizard(editId) {
       wizard.note       = m.note || '';
     }
   } else {
-    wizard.photo      = '';
-    wizard.name       = '';
-    wizard.selections = {};
-    wizard.rating     = 7;
-    wizard.note       = '';
+    wizard.photo = ''; wizard.name = '';
+    wizard.selections = {}; wizard.rating = 7; wizard.note = '';
   }
 
   renderWizard();
@@ -282,20 +271,21 @@ function startWizard(editId) {
 
 function renderWizard() {
   const app = document.getElementById('app');
-
-  // Build wizard shell
-  const totalSteps = wizard.steps.length;
-  const dotsHtml = wizard.steps.map((_, i) => {
+  const dots = wizard.steps.map((_, i) => {
     const cls = i === wizard.stepIndex ? 'active' : i < wizard.stepIndex ? 'done' : '';
-    return `<div class="wizard-dot ${cls}"></div>`;
+    return `<div class="wiz-dot ${cls}"></div>`;
   }).join('');
 
   app.innerHTML = `
     <div class="wizard" id="wizard">
       <div class="wizard-header">
-        <button class="wizard-back" id="wiz-back">←</button>
-        <div class="wizard-progress">${dotsHtml}</div>
-        <button class="wizard-skip" id="wiz-skip">Skip</button>
+        <button class="wiz-back" id="wiz-back">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="10,3 5,8 10,13"/>
+          </svg>
+        </button>
+        <div class="wiz-progress">${dots}</div>
+        <button class="wiz-skip" id="wiz-skip">Skip</button>
       </div>
       <div class="wizard-body" id="wiz-body"></div>
       <div class="wizard-footer">
@@ -303,374 +293,341 @@ function renderWizard() {
       </div>
     </div>`;
 
-  document.getElementById('wiz-back').onclick = wizardBack;
-  document.getElementById('wiz-skip').onclick = wizardSkip;
-  document.getElementById('wiz-next').onclick = wizardNext;
+  document.getElementById('wiz-back').onclick = wizBack;
+  document.getElementById('wiz-skip').onclick = () => wizNext(true);
+  document.getElementById('wiz-next').onclick = () => wizNext(false);
 
-  renderWizardStep();
+  renderStep();
 }
 
-function renderWizardStep() {
-  const body     = document.getElementById('wiz-body');
-  const nextBtn  = document.getElementById('wiz-next');
-  const skipBtn  = document.getElementById('wiz-skip');
-  const stepKey  = wizard.steps[wizard.stepIndex];
-  const isLast   = wizard.stepIndex === wizard.steps.length - 1;
+function renderStep() {
+  const body    = document.getElementById('wiz-body');
+  const nextBtn = document.getElementById('wiz-next');
+  const skipBtn = document.getElementById('wiz-skip');
+  const key     = wizard.steps[wizard.stepIndex];
+  const isLast  = wizard.stepIndex === wizard.steps.length - 1;
 
   // Update dots
-  document.querySelectorAll('.wizard-dot').forEach((d, i) => {
-    d.className = 'wizard-dot' +
-      (i === wizard.stepIndex ? ' active' : i < wizard.stepIndex ? ' done' : '');
+  document.querySelectorAll('.wiz-dot').forEach((d, i) => {
+    d.className = 'wiz-dot' + (i === wizard.stepIndex ? ' active' : i < wizard.stepIndex ? ' done' : '');
   });
 
-  nextBtn.textContent = isLast ? '💾 Save meal' : 'Continue';
-  skipBtn.classList.toggle('hidden', stepKey === 'photo' || stepKey === 'rating');
+  nextBtn.textContent = isLast ? 'Save meal' : 'Continue';
+  skipBtn.classList.toggle('hidden', key === 'photo' || key === 'rating');
 
-  body.innerHTML = buildStepHTML(stepKey);
-  bindStepEvents(stepKey);
+  body.innerHTML = buildStepHTML(key);
+  bindStep(key);
 
-  // Animate in
+  // Animate
   const step = body.querySelector('.wizard-step');
   if (step) {
-    step.style.opacity = '0';
-    step.style.transform = 'translateX(30px)';
+    step.style.cssText = 'opacity:0;transform:translateX(30px)';
     requestAnimationFrame(() => {
-      step.style.transition = 'all 0.25s cubic-bezier(0.4,0,0.2,1)';
-      step.style.opacity = '1';
-      step.style.transform = 'translateX(0)';
+      step.style.cssText = 'opacity:1;transform:translateX(0);transition:all 0.25s cubic-bezier(0.4,0,0.2,1)';
     });
   }
 }
 
-function buildStepHTML(stepKey) {
-  if (stepKey === 'photo') {
-    const hasPhoto = !!wizard.photo;
+function buildStepHTML(key) {
+  const idx = wizard.stepIndex + 1;
+
+  if (key === 'photo') {
     return `<div class="wizard-step active">
-      <div class="step-label">Step ${wizard.stepIndex + 1}</div>
+      <div class="step-eyebrow">Step ${idx} of ${wizard.steps.length}</div>
       <div class="step-title">Add a photo</div>
-      <div class="photo-area" id="photo-area">
-        ${hasPhoto
-          ? `<img src="${wizard.photo}" alt="meal photo" id="photo-preview">`
-          : `<div class="photo-placeholder">
-               <div class="ph-icon">📸</div>
-               <p>Tap to take or pick a photo</p>
-             </div>`}
-        <input type="file" id="photo-input" accept="image/*" capture="environment">
-        ${hasPhoto ? `<button class="photo-change" id="photo-change-btn">Change photo</button>` : ''}
+      <div class="photo-drop" id="photo-drop">
+        ${wizard.photo
+          ? `<img src="${wizard.photo}" alt="meal">`
+          : `<div class="photo-hint">
+              <div class="photo-hint-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+                  <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/>
+                  <circle cx="12" cy="13" r="4"/>
+                </svg>
+              </div>
+              <p>Tap to take or pick a photo</p>
+            </div>`}
+        <input type="file" id="photo-file" accept="image/*" capture="environment">
+        ${wizard.photo ? `<button class="photo-change-btn" id="photo-change">Change photo</button>` : ''}
       </div>
     </div>`;
   }
 
-  if (stepKey === 'name') {
+  if (key === 'name') {
     return `<div class="wizard-step active">
-      <div class="step-label">Step ${wizard.stepIndex + 1}</div>
+      <div class="step-eyebrow">Step ${idx} of ${wizard.steps.length}</div>
       <div class="step-title">What did you cook?</div>
-      <input class="name-input-big" id="name-input" type="text"
-        placeholder="Meal name…" value="${wizard.name}" autocomplete="off" autocapitalize="words">
+      <input class="name-big" id="name-in" type="text"
+        placeholder="Meal name…" value="${wizard.name}"
+        autocomplete="off" autocapitalize="words" spellcheck="false">
     </div>`;
   }
 
-  if (stepKey.startsWith('module:')) {
-    const modId = stepKey.split(':')[1];
-    const mod   = getModuleById(modId);
+  if (key.startsWith('mod:')) {
+    const modId = key.split(':')[1];
+    const mod   = getMod(modId);
     if (!mod) return '<div class="wizard-step active"></div>';
-    const selected = wizard.selections[modId] || [];
+    const sel   = wizard.selections[modId] || [];
 
-    const itemsHtml = mod.ingredients.map(ing => {
-      const sel = selected.includes(ing);
-      return `<div class="ingredient-item ${sel ? 'selected' : ''}" data-ing="${ing}">
-        <div class="ingredient-check">${sel ? '✓' : ''}</div>
+    const items = mod.ingredients.map(ing => `
+      <div class="ingredient-row ${sel.includes(ing) ? 'selected' : ''}" data-ing="${ing}">
+        <div class="ing-check">${checkSVG}</div>
         <span>${ing}</span>
-      </div>`;
-    }).join('');
+      </div>`).join('');
 
     return `<div class="wizard-step active">
-      <div class="step-label">Step ${wizard.stepIndex + 1}</div>
-      <span class="module-step-emoji">${mod.emoji}</span>
+      <div class="step-eyebrow">Step ${idx} of ${wizard.steps.length}</div>
+      <div class="module-eyebrow-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+          <circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/>
+        </svg>
+      </div>
       <div class="step-title">${mod.name}</div>
-      <div class="ingredient-list" id="ingredient-list">${itemsHtml}</div>
-      <div class="add-ingredient-row">
-        <input type="text" id="new-ing-input" placeholder="Add ingredient…" autocapitalize="words">
-        <button id="new-ing-btn">Add</button>
+      <div class="ingredient-list" id="ing-list">${items}</div>
+      <div class="add-row">
+        <input type="text" id="new-ing" placeholder="Add ingredient…" autocapitalize="words">
+        <button id="add-ing-btn">Add</button>
       </div>
     </div>`;
   }
 
-  if (stepKey === 'rating') {
-    const r     = wizard.rating;
-    const color = ratingColor(r);
+  if (key === 'rating') {
+    const c = ratingColor(wizard.rating);
     return `<div class="wizard-step active">
-      <div class="step-label">Step ${wizard.stepIndex + 1}</div>
-      <div class="step-title">Rate it</div>
-      <div class="rating-display">
-        <div class="rating-number" id="rating-number" style="color:${color}">${r}</div>
-        <div class="rating-label" id="rating-label" style="color:${color}">${ratingLabel(r)}</div>
+      <div class="step-eyebrow">Step ${idx} of ${wizard.steps.length}</div>
+      <div class="step-title">Rate this meal</div>
+      <div class="rating-big">
+        <div class="rating-num" id="r-num" style="color:${c}">${wizard.rating}</div>
+        <div class="rating-word" id="r-word" style="color:${c}">${ratingWord(wizard.rating)}</div>
       </div>
-      <div class="rating-slider-wrap">
-        <input type="range" class="big-slider" id="rating-slider"
-          min="1" max="10" value="${r}"
-          style="--track-color:${color}">
+      <div class="slider-wrap">
+        <input type="range" class="rating-range" id="r-slider" min="1" max="10" value="${wizard.rating}">
       </div>
-      <div class="rating-ticks">
-        <span>1</span><span>5</span><span>10</span>
-      </div>
+      <div class="rating-scale"><span>1</span><span>5</span><span>10</span></div>
     </div>`;
   }
 
-  if (stepKey === 'note') {
+  if (key === 'note') {
     return `<div class="wizard-step active">
-      <div class="step-label">Step ${wizard.stepIndex + 1}</div>
+      <div class="step-eyebrow">Step ${idx} of ${wizard.steps.length}</div>
       <div class="step-title">Any notes?</div>
-      <textarea class="note-textarea" id="note-input"
-        placeholder="Too salty? Perfect balance? What would you change…"
-        rows="6">${wizard.note}</textarea>
+      <textarea class="note-area" id="note-in"
+        placeholder="Too salty? Perfect balance? What would you change next time…">${wizard.note}</textarea>
     </div>`;
   }
 
   return '<div class="wizard-step active"></div>';
 }
 
-function bindStepEvents(stepKey) {
-  if (stepKey === 'photo') {
-    const area   = document.getElementById('photo-area');
-    const input  = document.getElementById('photo-input');
-    const change = document.getElementById('photo-change-btn');
+function bindStep(key) {
+  if (key === 'photo') {
+    const drop   = document.getElementById('photo-drop');
+    const fileIn = document.getElementById('photo-file');
+    const chgBtn = document.getElementById('photo-change');
+    const trigger = () => fileIn.click();
 
-    const triggerPick = () => input.click();
-    area.addEventListener('click', e => {
-      if (e.target === change) return;
-      triggerPick();
-    });
-    if (change) change.addEventListener('click', triggerPick);
+    drop.addEventListener('click', e => { if (e.target !== chgBtn) trigger(); });
+    if (chgBtn) chgBtn.addEventListener('click', trigger);
 
-    input.addEventListener('change', async e => {
-      const file = e.target.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = ev => {
+    fileIn.addEventListener('change', e => {
+      const f = e.target.files[0];
+      if (!f) return;
+      const r = new FileReader();
+      r.onload = ev => {
         wizard.photo = ev.target.result;
-        // Update preview without re-rendering whole step
-        const area = document.getElementById('photo-area');
-        area.innerHTML = `
-          <img src="${wizard.photo}" alt="meal photo" id="photo-preview">
-          <input type="file" id="photo-input" accept="image/*" capture="environment">
-          <button class="photo-change" id="photo-change-btn">Change photo</button>`;
-        bindStepEvents('photo');
+        // Patch just the image area without full re-render
+        const d = document.getElementById('photo-drop');
+        d.innerHTML = `<img src="${wizard.photo}" alt="meal">
+          <input type="file" id="photo-file" accept="image/*" capture="environment">
+          <button class="photo-change-btn" id="photo-change">Change photo</button>`;
+        bindStep('photo');
       };
-      reader.readAsDataURL(file);
+      r.readAsDataURL(f);
     });
   }
 
-  if (stepKey === 'name') {
-    const input = document.getElementById('name-input');
-    input.addEventListener('input', e => { wizard.name = e.target.value; });
-    setTimeout(() => input.focus(), 50);
+  if (key === 'name') {
+    const inp = document.getElementById('name-in');
+    inp.addEventListener('input', e => { wizard.name = e.target.value; });
+    setTimeout(() => inp.focus(), 80);
   }
 
-  if (stepKey.startsWith('module:')) {
-    const modId = stepKey.split(':')[1];
+  if (key.startsWith('mod:')) {
+    const modId = key.split(':')[1];
     if (!wizard.selections[modId]) wizard.selections[modId] = [];
 
-    document.querySelectorAll('.ingredient-item').forEach(el => {
+    document.querySelectorAll('.ingredient-row').forEach(el => {
       el.addEventListener('click', () => {
         const ing = el.dataset.ing;
         const arr = wizard.selections[modId];
         const idx = arr.indexOf(ing);
-        if (idx === -1) arr.push(ing);
-        else arr.splice(idx, 1);
-
-        const sel = arr.includes(ing) || idx === -1 && arr.includes(ing);
-        const isNowSelected = wizard.selections[modId].includes(ing);
-        el.classList.toggle('selected', isNowSelected);
-        el.querySelector('.ingredient-check').textContent = isNowSelected ? '✓' : '';
+        if (idx === -1) arr.push(ing); else arr.splice(idx, 1);
+        const now = arr.includes(ing);
+        el.classList.toggle('selected', now);
+        el.querySelector('.ing-check').innerHTML = now ? checkSVG : '';
       });
     });
 
-    const addBtn = document.getElementById('new-ing-btn');
-    const addInput = document.getElementById('new-ing-input');
+    const addBtn = document.getElementById('add-ing-btn');
+    const addIn  = document.getElementById('new-ing');
 
-    addBtn.addEventListener('click', async () => {
-      const val = addInput.value.trim().toLowerCase();
+    const doAdd = async () => {
+      const val = addIn.value.trim().toLowerCase();
       if (!val) return;
-      const mod = getModuleById(modId);
-      if (!mod.ingredients.includes(val)) {
-        mod.ingredients.push(val);
-        await saveState();
-      }
-      if (!wizard.selections[modId].includes(val)) {
-        wizard.selections[modId].push(val);
-      }
-      addInput.value = '';
+      const mod = getMod(modId);
+      if (!mod.ingredients.includes(val)) { mod.ingredients.push(val); await saveState(); }
+      if (!wizard.selections[modId].includes(val)) wizard.selections[modId].push(val);
+      addIn.value = '';
 
-      // Add to list visually
-      const list = document.getElementById('ingredient-list');
-      const el = document.createElement('div');
-      el.className = 'ingredient-item selected';
+      const list = document.getElementById('ing-list');
+      const el   = document.createElement('div');
+      el.className = 'ingredient-row selected';
       el.dataset.ing = val;
-      el.innerHTML = `<div class="ingredient-check">✓</div><span>${val}</span>`;
+      el.innerHTML = `<div class="ing-check">${checkSVG}</div><span>${val}</span>`;
       el.addEventListener('click', () => {
         const arr = wizard.selections[modId];
-        const idx = arr.indexOf(val);
-        if (idx === -1) arr.push(val);
-        else arr.splice(idx, 1);
-        const isNow = wizard.selections[modId].includes(val);
-        el.classList.toggle('selected', isNow);
-        el.querySelector('.ingredient-check').textContent = isNow ? '✓' : '';
+        const i   = arr.indexOf(val);
+        if (i === -1) arr.push(val); else arr.splice(i, 1);
+        const now = arr.includes(val);
+        el.classList.toggle('selected', now);
+        el.querySelector('.ing-check').innerHTML = now ? checkSVG : '';
       });
       list.appendChild(el);
-    });
+    };
 
-    addInput.addEventListener('keydown', e => {
-      if (e.key === 'Enter') { e.preventDefault(); addBtn.click(); }
-    });
+    addBtn.addEventListener('click', doAdd);
+    addIn.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doAdd(); } });
   }
 
-  if (stepKey === 'rating') {
-    const slider = document.getElementById('rating-slider');
-    slider.addEventListener('input', e => {
+  if (key === 'rating') {
+    document.getElementById('r-slider').addEventListener('input', e => {
       const r = +e.target.value;
       wizard.rating = r;
-      const color = ratingColor(r);
-      document.getElementById('rating-number').textContent = r;
-      document.getElementById('rating-number').style.color = color;
-      document.getElementById('rating-label').textContent = ratingLabel(r);
-      document.getElementById('rating-label').style.color = color;
+      const c = ratingColor(r);
+      document.getElementById('r-num').textContent  = r;
+      document.getElementById('r-num').style.color  = c;
+      document.getElementById('r-word').textContent = ratingWord(r);
+      document.getElementById('r-word').style.color = c;
     });
   }
 
-  if (stepKey === 'note') {
-    const ta = document.getElementById('note-input');
-    ta.addEventListener('input', e => { wizard.note = e.target.value; });
+  if (key === 'note') {
+    document.getElementById('note-in').addEventListener('input', e => { wizard.note = e.target.value; });
   }
 }
 
-function wizardBack() {
+function wizBack() {
   if (wizard.stepIndex === 0) {
-    // Exit wizard
     wizard.active = false;
     view = 'home';
     render();
     return;
   }
   wizard.stepIndex--;
-  renderWizardStep();
+  renderStep();
 }
 
-function wizardSkip() {
-  wizardNext(true);
-}
-
-async function wizardNext(skip = false) {
-  const stepKey = wizard.steps[wizard.stepIndex];
-
-  // Validate current step
-  if (!skip) {
-    if (stepKey === 'name' && !wizard.name.trim()) {
-      const input = document.getElementById('name-input');
-      if (input) { input.style.borderColor = '#ef4444'; input.focus(); }
-      return;
-    }
-  }
-
+async function wizNext(skip) {
+  const key    = wizard.steps[wizard.stepIndex];
   const isLast = wizard.stepIndex === wizard.steps.length - 1;
 
-  if (isLast) {
-    await saveMeal();
+  if (!skip && key === 'name' && !wizard.name.trim()) {
+    const inp = document.getElementById('name-in');
+    if (inp) { inp.style.borderColor = '#ef4444'; inp.focus(); }
     return;
   }
 
+  if (isLast) { await saveMeal(); return; }
   wizard.stepIndex++;
-  renderWizardStep();
+  renderStep();
 }
 
 async function saveMeal() {
   const meal = {
     id:         wizard.editingId || uid(),
-    name:       wizard.name.trim() || 'Unnamed meal',
+    name:       wizard.name.trim() || 'Unnamed',
     photo:      wizard.photo,
     date:       wizard.editingId
-                  ? (state.meals.find(x => x.id === wizard.editingId)?.date || new Date().toISOString().slice(0,10))
-                  : new Date().toISOString().slice(0,10),
+                  ? (state.meals.find(x => x.id === wizard.editingId)?.date || today())
+                  : today(),
     selections: wizard.selections,
     rating:     wizard.rating,
     note:       wizard.note.trim(),
   };
 
-  if (wizard.editingId) {
-    state.meals = state.meals.map(x => x.id === wizard.editingId ? meal : x);
-  } else {
-    state.meals.push(meal);
-  }
+  if (wizard.editingId) state.meals = state.meals.map(x => x.id === wizard.editingId ? meal : x);
+  else state.meals.push(meal);
 
   await saveState();
-  wizard.active    = false;
+  wizard.active = false;
   wizard.editingId = null;
   view = 'home';
   render();
 }
 
-/* ─── SHOPPING ─── */
-function renderShopping(app) {
-  const allMealOptions = state.meals
-    .map(m => `<option value="${m.id}">${m.name}</option>`)
-    .join('');
+const today = () => new Date().toISOString().slice(0, 10);
 
-  const listHtml = (() => {
-    if (!state.shoppingList.length) return '<p style="color:var(--text3);font-size:.88rem;padding:0 16px 8px">Your list is empty.</p>';
+/* ── SHOPPING ── */
+function renderShopping(app) {
+  const opts = state.meals.map(m => `<option value="${m.id}">${m.name}</option>`).join('');
+
+  const listHTML = (() => {
+    if (!state.shoppingList.length)
+      return '<p style="color:var(--text3);font-size:.88rem;padding:14px 20px 0">Your list is empty.</p>';
     const byDay = {};
     state.shoppingList.forEach((g, gi) => {
       (byDay[g.day] = byDay[g.day] || []).push({ g, gi });
     });
     return Object.entries(byDay).map(([day, groups]) => `
-      <div class="day-group">
-        <div class="day-label">📅 ${day}</div>
+      <div class="day-section">
+        <div class="day-label">${day}</div>
         ${groups.map(({ g, gi }) => `
-          <div class="meal-group">
-            <div class="meal-group-header">🍽️ ${g.meal}</div>
+          <div class="meal-card">
+            <div class="meal-card-head">${g.meal}</div>
             ${g.items.map((it, ii) => `
-              <div class="shop-item" data-gi="${gi}" data-ii="${ii}">
-                <input type="checkbox" ${it.checked ? 'checked' : ''} readonly>
-                <span class="shop-item-name ${it.checked ? 'done' : ''}">${it.name}</span>
+              <div class="shop-row ${it.checked ? 'checked' : ''}" data-gi="${gi}" data-ii="${ii}">
+                <div class="shop-check">${checkSVG}</div>
+                <span class="shop-name ${it.checked ? 'done' : ''}">${it.name}</span>
               </div>`).join('')}
           </div>`).join('')}
       </div>`).join('');
   })();
 
   app.innerHTML = `
-    <div class="page-header">
-      <h1 class="page-title">Shopping</h1>
-      <p class="page-subtitle">Plan meals and build your list</p>
-    </div>
-
-    <div class="section-card">
-      <h3>📋 Plan a meal</h3>
-      <div class="input-row" style="margin-bottom:8px">
-        <select id="meal-pick"><option value="">Select a meal…</option>${allMealOptions}</select>
+    <div class="page-wrap">
+      <div class="page-head">
+        <h1 class="page-h1">Shopping</h1>
+        <p class="page-sub">Plan meals and track ingredients</p>
       </div>
-      <div class="input-row">
-        <input type="text" id="day-pick" placeholder="Day (e.g. Monday)">
-        <button class="btn-add-inline" id="plan-add">Add</button>
-      </div>
-    </div>
 
-    <div class="section-card">
-      <h3>✏️ Add manually</h3>
-      <div class="input-row" style="margin-bottom:8px">
-        <input type="text" id="m-day" placeholder="Day">
-        <input type="text" id="m-meal" placeholder="Meal name">
+      <div class="card-block">
+        <h3>Plan a meal</h3>
+        <div class="field-row">
+          <select id="meal-pick"><option value="">Select a meal…</option>${opts}</select>
+        </div>
+        <div class="field-row">
+          <input type="text" id="day-pick" placeholder="Day (e.g. Monday)">
+          <button class="btn-teal" id="plan-add">Add</button>
+        </div>
       </div>
-      <div class="input-row">
-        <input type="text" id="m-item" placeholder="Ingredient">
-        <button class="btn-add-inline" id="m-add">Add</button>
+
+      <div class="card-block">
+        <h3>Add manually</h3>
+        <div class="field-row">
+          <input type="text" id="m-day" placeholder="Day">
+          <input type="text" id="m-meal" placeholder="Meal name">
+        </div>
+        <div class="field-row">
+          <input type="text" id="m-item" placeholder="Ingredient">
+          <button class="btn-teal" id="m-add">Add</button>
+        </div>
       </div>
-    </div>
 
-    ${listHtml}
-    ${state.shoppingList.length ? `<button class="btn-danger-full" id="clear-list">🗑 Clear list</button>` : ''}
-  `;
+      ${listHTML}
+      ${state.shoppingList.length ? `<button class="btn-clear" id="clear-list">Clear list</button>` : ''}
+    </div>`;
 
-  // Checkboxes
-  app.querySelectorAll('.shop-item').forEach(el => {
+  app.querySelectorAll('.shop-row').forEach(el => {
     el.addEventListener('click', async () => {
       const gi = +el.dataset.gi, ii = +el.dataset.ii;
       state.shoppingList[gi].items[ii].checked = !state.shoppingList[gi].items[ii].checked;
@@ -679,20 +636,18 @@ function renderShopping(app) {
     });
   });
 
-  // Plan add
   app.querySelector('#plan-add').addEventListener('click', async () => {
-    const id  = app.querySelector('#meal-pick').value;
-    const day = app.querySelector('#day-pick').value.trim();
+    const id   = app.querySelector('#meal-pick').value;
+    const day  = app.querySelector('#day-pick').value.trim();
     const meal = state.meals.find(m => m.id === id);
     if (!meal || !day) return;
     const items = ingredientsFlat(meal).map(n => ({ name: n, checked: false }));
-    if (!items.length) return alert('This meal has no ingredients in its modules.');
+    if (!items.length) return alert('This meal has no ingredients logged.');
     state.shoppingList.push({ day, meal: meal.name, items });
     await saveState();
     renderShopping(app);
   });
 
-  // Manual add
   app.querySelector('#m-add').addEventListener('click', async () => {
     const day  = app.querySelector('#m-day').value.trim();
     const meal = app.querySelector('#m-meal').value.trim();
@@ -705,7 +660,6 @@ function renderShopping(app) {
     renderShopping(app);
   });
 
-  // Clear
   app.querySelector('#clear-list')?.addEventListener('click', async () => {
     if (!confirm('Clear the entire shopping list?')) return;
     state.shoppingList = [];
@@ -714,173 +668,162 @@ function renderShopping(app) {
   });
 }
 
-/* ─── SETTINGS ─── */
+/* ── SETTINGS ── */
 function renderSettings(app) {
-  const modulesHtml = state.modules.map(mod => `
-    <div class="settings-module" id="mod-${mod.id}">
-      <div class="settings-module-header">
-        <span class="settings-module-name">
-          ${mod.emoji} ${mod.name}
-          <span class="settings-module-count">${mod.ingredients.length} items</span>
-        </span>
-        <span style="color:var(--text3);font-size:0.85rem">▼</span>
+  const modsHTML = state.modules.map(mod => `
+    <div class="settings-mod" id="smod-${mod.id}">
+      <div class="settings-mod-head" data-mod="${mod.id}">
+        <div class="mod-head-left">
+          <div class="mod-dot"></div>
+          <span class="mod-name">${mod.name}</span>
+          <span class="mod-count">${mod.ingredients.length} items</span>
+        </div>
+        <svg class="mod-chevron" viewBox="0 0 16 16" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="4,6 8,10 12,6"/>
+        </svg>
       </div>
-      <div class="settings-module-body hidden" id="mod-body-${mod.id}">
-        <div class="settings-chip-list" id="chips-${mod.id}">
-          ${mod.ingredients.map((ing, idx) => `
+      <div class="settings-mod-body hidden" id="smb-${mod.id}">
+        <div class="settings-chips" id="schips-${mod.id}">
+          ${mod.ingredients.map((ing, i) => `
             <span class="settings-chip">
               ${ing}
-              <button class="settings-chip-del" data-mod="${mod.id}" data-idx="${idx}">✕</button>
+              <button class="chip-del" data-mod="${mod.id}" data-i="${i}">
+                <svg viewBox="0 0 8 8" fill="none" stroke-linecap="round"><line x1="1" y1="1" x2="7" y2="7"/><line x1="7" y1="1" x2="1" y2="7"/></svg>
+              </button>
             </span>`).join('')}
         </div>
-        <div class="add-ingredient-row">
-          <input type="text" id="add-ing-${mod.id}" placeholder="Add ingredient…" autocapitalize="words">
-          <button data-addmod="${mod.id}">Add</button>
+        <div class="add-row">
+          <input type="text" id="sadd-${mod.id}" placeholder="Add ingredient…" autocapitalize="words">
+          <button data-addm="${mod.id}">Add</button>
         </div>
-        <button class="settings-del-module" data-delmod="${mod.id}">🗑 Delete this module</button>
+        <button class="btn-del-mod" data-delm="${mod.id}">Delete module</button>
       </div>
     </div>`).join('');
 
   app.innerHTML = `
-    <div class="page-header">
-      <h1 class="page-title">Settings</h1>
-    </div>
-
-    ${modulesHtml}
-
-    <div class="new-module-card">
-      <h3>+ New module</h3>
-      <div class="input-row" style="margin-bottom:8px">
-        <input type="text" id="new-mod-emoji" placeholder="Emoji (e.g. 🥗)" style="max-width:80px;text-align:center">
-        <input type="text" id="new-mod-name" placeholder="Module name (e.g. Salad)" autocapitalize="words">
+    <div class="page-wrap">
+      <div class="page-head">
+        <h1 class="page-h1">Settings</h1>
       </div>
-      <button class="btn-add-inline" id="create-module" style="width:100%;margin-top:4px">Create module</button>
-    </div>
 
-    <div class="data-card">
-      <h3>Data</h3>
-      <div class="data-btns">
-        <button class="btn-secondary" id="export-btn">📤 Export</button>
-        <label class="btn-secondary" style="display:flex;align-items:center;justify-content:center;cursor:pointer">
-          📥 Import
-          <input type="file" id="import-input" accept="application/json" style="display:none">
-        </label>
+      ${modsHTML}
+
+      <div class="new-mod-card">
+        <h3>New module</h3>
+        <div class="add-row" style="margin-bottom:0">
+          <input type="text" id="nm-name" placeholder="Module name (e.g. Salad)" autocapitalize="words">
+          <button id="nm-create" class="btn-teal">Create</button>
+        </div>
       </div>
-    </div>
 
-    <div class="about-card">
-      <div class="about-logo">Cook<span>Book</span></div>
-      <div class="about-version">Version 2.0 · Offline PWA</div>
-    </div>
-  `;
+      <div class="data-card">
+        <h3>Data</h3>
+        <div class="data-btns">
+          <button class="btn-outline" id="exp-btn">Export JSON</button>
+          <label class="btn-outline" style="cursor:pointer">
+            Import JSON
+            <input type="file" id="imp-in" accept="application/json" style="display:none">
+          </label>
+        </div>
+      </div>
+
+      <div class="about-card">
+        <div class="about-logo">Cook<span>Book</span></div>
+        <div class="about-v">Version 3.0 · Offline PWA</div>
+      </div>
+    </div>`;
 
   // Toggle module bodies
-  app.querySelectorAll('.settings-module-header').forEach(h => {
+  app.querySelectorAll('.settings-mod-head').forEach(h => {
     h.addEventListener('click', () => {
-      const body = h.nextElementSibling;
-      body.classList.toggle('hidden');
-      h.querySelector('span:last-child').textContent =
-        body.classList.contains('hidden') ? '▼' : '▲';
+      const body = document.getElementById('smb-' + h.dataset.mod);
+      const open = !body.classList.contains('hidden');
+      body.classList.toggle('hidden', open);
+      h.classList.toggle('open', !open);
     });
   });
 
-  // Delete ingredient
-  app.querySelectorAll('.settings-chip-del').forEach(btn => {
+  // Delete ingredient chip
+  app.querySelectorAll('.chip-del').forEach(btn => {
     btn.addEventListener('click', async e => {
       e.stopPropagation();
-      const modId = btn.dataset.mod;
-      const idx   = +btn.dataset.idx;
-      const mod   = getModuleById(modId);
-      mod.ingredients.splice(idx, 1);
+      const mod = getMod(btn.dataset.mod);
+      mod.ingredients.splice(+btn.dataset.i, 1);
       await saveState();
       renderSettings(app);
     });
   });
 
-  // Add ingredient to module
-  app.querySelectorAll('[data-addmod]').forEach(btn => {
+  // Add ingredient
+  app.querySelectorAll('[data-addm]').forEach(btn => {
     btn.addEventListener('click', async () => {
-      const modId = btn.dataset.addmod;
-      const input = app.querySelector(`#add-ing-${modId}`);
-      const val   = input.value.trim().toLowerCase();
+      const modId = btn.dataset.addm;
+      const inp   = app.querySelector(`#sadd-${modId}`);
+      const val   = inp.value.trim().toLowerCase();
       if (!val) return;
-      const mod = getModuleById(modId);
-      if (!mod.ingredients.includes(val)) {
-        mod.ingredients.push(val);
-        await saveState();
-        renderSettings(app);
-      }
+      const mod = getMod(modId);
+      if (!mod.ingredients.includes(val)) { mod.ingredients.push(val); await saveState(); renderSettings(app); }
     });
   });
 
   // Delete module
-  app.querySelectorAll('[data-delmod]').forEach(btn => {
+  app.querySelectorAll('[data-delm]').forEach(btn => {
     btn.addEventListener('click', async () => {
-      const modId = btn.dataset.delmod;
       if (!confirm('Delete this module and all its ingredients?')) return;
-      state.modules = state.modules.filter(m => m.id !== modId);
+      state.modules = state.modules.filter(m => m.id !== btn.dataset.delm);
       await saveState();
       renderSettings(app);
     });
   });
 
-  // Create new module
-  app.querySelector('#create-module').addEventListener('click', async () => {
-    const emoji = app.querySelector('#new-mod-emoji').value.trim() || '📦';
-    const name  = app.querySelector('#new-mod-name').value.trim();
+  // Create module
+  app.querySelector('#nm-create').addEventListener('click', async () => {
+    const name = app.querySelector('#nm-name').value.trim();
     if (!name) return;
-    const newMod = {
-      id:          name.toLowerCase().replace(/\s+/g, '_') + '_' + Date.now(),
-      name:        name,
-      emoji:       emoji,
-      ingredients: [],
-    };
-    state.modules.push(newMod);
+    state.modules.push({
+      id: name.toLowerCase().replace(/\s+/g, '_') + '_' + Date.now(),
+      name, ingredients: [],
+    });
     await saveState();
     renderSettings(app);
   });
 
   // Export
-  app.querySelector('#export-btn').addEventListener('click', () => {
+  app.querySelector('#exp-btn').addEventListener('click', () => {
     const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
-    const a    = document.createElement('a');
-    a.href     = URL.createObjectURL(blob);
-    a.download = 'cookbook-export.json';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'cookbook-backup.json';
     a.click();
   });
 
   // Import
-  app.querySelector('#import-input').addEventListener('change', async e => {
-    const file = e.target.files[0];
-    if (!file) return;
+  app.querySelector('#imp-in').addEventListener('change', async e => {
+    const f = e.target.files[0];
+    if (!f) return;
     try {
-      const imported = JSON.parse(await file.text());
-      state = Object.assign(JSON.parse(JSON.stringify(DEFAULT_STATE)), imported);
+      state = Object.assign(JSON.parse(JSON.stringify(DEFAULT_STATE)), JSON.parse(await f.text()));
       await saveState();
       renderSettings(app);
-      alert('Import successful!');
-    } catch {
-      alert('Invalid file.');
-    }
+      alert('Import successful.');
+    } catch { alert('Invalid file.'); }
   });
 }
 
-/* ─── SORT & SEARCH ─── */
-document.getElementById('sort-btn').addEventListener('click', () => {
-  sortOpen = !sortOpen;
-  document.getElementById('sort-sheet').classList.toggle('hidden', !sortOpen);
-});
-
+/* ── SEARCH & SORT ── */
 document.getElementById('search-btn').addEventListener('click', () => {
   searchOpen = !searchOpen;
   const bar = document.getElementById('search-bar');
   bar.classList.toggle('hidden', !searchOpen);
   document.getElementById('app').classList.toggle('search-open', searchOpen);
   if (searchOpen) setTimeout(() => bar.querySelector('input').focus(), 50);
-  else {
-    bar.querySelector('input').value = '';
-    renderHome(document.getElementById('app'));
-  }
+  else { bar.querySelector('input').value = ''; renderHome(document.getElementById('app')); }
+});
+
+document.getElementById('sort-btn').addEventListener('click', e => {
+  e.stopPropagation();
+  sortOpen = !sortOpen;
+  document.getElementById('sort-sheet').classList.toggle('hidden', !sortOpen);
 });
 
 document.querySelectorAll('.sort-opt').forEach(btn => {
@@ -898,7 +841,6 @@ document.getElementById('search-input').addEventListener('input', () => {
   if (view === 'home') renderHome(document.getElementById('app'));
 });
 
-// Close sort sheet on outside click
 document.addEventListener('click', e => {
   if (sortOpen && !e.target.closest('#sort-sheet') && !e.target.closest('#sort-btn')) {
     sortOpen = false;
@@ -906,35 +848,21 @@ document.addEventListener('click', e => {
   }
 });
 
-/* ─── NAV ─── */
+/* ── NAV ── */
 document.querySelectorAll('.nav-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     const tab = btn.dataset.tab;
-    if (tab === 'add') {
-      startWizard(null);
-      return;
-    }
+    if (tab === 'add') { startWizard(null); return; }
     wizard.active = false;
     view = tab;
     render();
   });
 });
 
-/* ─── PWA INSTALL ─── */
-window.addEventListener('beforeinstallprompt', e => {
-  e.preventDefault();
-  deferredPrompt = e;
-});
-
-/* ─── SERVICE WORKER ─── */
+/* ── SERVICE WORKER ── */
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () =>
-    navigator.serviceWorker.register('sw.js').catch(() => {})
-  );
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
 }
 
-/* ─── BOOT ─── */
-(async () => {
-  await loadState();
-  render();
-})();
+/* ── BOOT ── */
+(async () => { await loadState(); render(); })();

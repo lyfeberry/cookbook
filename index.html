@@ -1,73 +1,107 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#0a0a0a" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="description" content="Offline-first personal cooking journal" />
-    <link rel="manifest" href="manifest.webmanifest" />
-    <link rel="icon" href="icons/icon.svg" sizes="any" />
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,600;0,9..144,700;1,9..144,300&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
-    <title>Cooking Journal</title>
-    <link rel="stylesheet" href="styles.css" />
-  </head>
-  <body>
-    <!-- Top bar (home only) -->
-    <header class="topbar" id="topbar">
-      <div class="topbar-left">
-        <h1>Cook<span>Book</span></h1>
-      </div>
-      <div class="topbar-right" id="home-controls">
-        <button class="icon-btn" id="sort-btn" title="Sort">⇅</button>
-        <button class="icon-btn" id="search-btn" title="Search">🔍</button>
-      </div>
-    </header>
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+  <meta name="theme-color" content="#ffffff"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="default"/>
+  <meta name="description" content="Personal cooking journal"/>
+  <link rel="manifest" href="manifest.webmanifest"/>
+  <link rel="icon" href="icons/icon.svg" sizes="any"/>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,300;1,9..144,400&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <title>CookBook</title>
+  <link rel="stylesheet" href="styles.css"/>
+</head>
+<body>
 
-    <!-- Search bar (hidden by default) -->
-    <div class="search-bar hidden" id="search-bar">
-      <input type="search" id="search-input" placeholder="Search meals…" />
+  <!-- TOP BAR -->
+  <header class="topbar" id="topbar">
+    <h1 class="topbar-logo">Cook<span>Book</span></h1>
+    <div class="topbar-actions" id="home-controls">
+      <button class="topbar-btn" id="search-btn" aria-label="Search">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+          <circle cx="7.5" cy="7.5" r="5"/>
+          <line x1="11.5" y1="11.5" x2="16" y2="16"/>
+        </svg>
+      </button>
+      <button class="topbar-btn" id="sort-btn" aria-label="Sort">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+          <line x1="2" y1="5" x2="16" y2="5"/>
+          <line x1="4" y1="9" x2="14" y2="9"/>
+          <line x1="7" y1="13" x2="11" y2="13"/>
+        </svg>
+      </button>
     </div>
+  </header>
 
-    <!-- Sort sheet -->
-    <div class="sort-sheet hidden" id="sort-sheet">
-      <button data-sort="random" class="sort-opt active">🎲 Random</button>
-      <button data-sort="date" class="sort-opt">📅 Newest</button>
-      <button data-sort="rating" class="sort-opt">⭐ Top rated</button>
-      <button data-sort="az" class="sort-opt">🔤 A–Z</button>
-    </div>
+  <!-- SEARCH BAR -->
+  <div class="search-bar hidden" id="search-bar">
+    <input type="search" id="search-input" placeholder="Search meals…" autocomplete="off"/>
+  </div>
 
-    <!-- Main content area -->
-    <main id="app"></main>
+  <!-- SORT DROPDOWN -->
+  <div class="sort-dropdown hidden" id="sort-sheet">
+    <button class="sort-opt active" data-sort="random">Random</button>
+    <button class="sort-opt" data-sort="date">Newest first</button>
+    <button class="sort-opt" data-sort="rating">Top rated</button>
+    <button class="sort-opt" data-sort="az">A — Z</button>
+  </div>
 
-    <!-- Bottom navigation -->
-    <nav class="bottom-nav">
-      <button data-tab="home" class="nav-btn active">
-        <span class="nav-icon">⊞</span>
-        <span class="nav-label">Home</span>
-      </button>
-      <button data-tab="add" class="nav-btn">
-        <span class="nav-icon add-icon">+</span>
-        <span class="nav-label">Add</span>
-      </button>
-      <button data-tab="shopping" class="nav-btn">
-        <span class="nav-icon">🛒</span>
-        <span class="nav-label">Shopping</span>
-      </button>
-      <button data-tab="settings" class="nav-btn">
-        <span class="nav-icon">⚙</span>
-        <span class="nav-label">Settings</span>
-      </button>
-    </nav>
+  <!-- MAIN -->
+  <main id="app"></main>
 
-    <!-- Meal detail modal -->
-    <div class="modal-overlay hidden" id="detail-overlay">
-      <div class="modal" id="detail-modal"></div>
-    </div>
+  <!-- BOTTOM NAV -->
+  <nav class="bottom-nav">
+    <button class="nav-btn active" data-tab="home">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="7" height="7" rx="1.5"/>
+        <rect x="14" y="3" width="7" height="7" rx="1.5"/>
+        <rect x="3" y="14" width="7" height="7" rx="1.5"/>
+        <rect x="14" y="14" width="7" height="7" rx="1.5"/>
+      </svg>
+      <span class="nav-label">Home</span>
+    </button>
 
-    <script src="app.js" defer></script>
-  </body>
+    <button class="nav-btn" data-tab="add">
+      <span class="nav-add-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <line x1="12" y1="5" x2="12" y2="19"/>
+          <line x1="5" y1="12" x2="19" y2="12"/>
+        </svg>
+      </span>
+      <span class="nav-label">Add</span>
+    </button>
+
+    <button class="nav-btn" data-tab="shopping">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4z"/>
+        <line x1="3" y1="6" x2="21" y2="6"/>
+        <path d="M16 10a4 4 0 01-8 0"/>
+      </svg>
+      <span class="nav-label">Shopping</span>
+    </button>
+
+    <button class="nav-btn" data-tab="settings">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+        <line x1="4" y1="6" x2="20" y2="6"/>
+        <circle cx="8" cy="6" r="2" fill="white"/>
+        <line x1="4" y1="12" x2="20" y2="12"/>
+        <circle cx="16" cy="12" r="2" fill="white"/>
+        <line x1="4" y1="18" x2="20" y2="18"/>
+        <circle cx="10" cy="18" r="2" fill="white"/>
+      </svg>
+      <span class="nav-label">Settings</span>
+    </button>
+  </nav>
+
+  <!-- DETAIL MODAL -->
+  <div class="modal-overlay hidden" id="detail-overlay">
+    <div class="modal-sheet" id="detail-modal"></div>
+  </div>
+
+  <script src="app.js" defer></script>
+</body>
 </html>
