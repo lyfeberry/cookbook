@@ -2,41 +2,72 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#121212" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0a0a0a" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="description" content="Offline-first personal cooking journal" />
     <link rel="manifest" href="manifest.webmanifest" />
     <link rel="icon" href="icons/icon.svg" sizes="any" />
-    <title>Cooking Journal</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,600;0,9..144,700;1,9..144,300&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <title>Cooking Journal</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <header class="topbar">
-      <h1>Cooking <span style="color:var(--accent)">Journal</span></h1>
-      <div id="home-controls" class="home-controls">
-        <select id="sort-select">
-          <option value="random">Random</option>
-          <option value="date">Date</option>
-          <option value="rating">Rating</option>
-          <option value="az">A–Z</option>
-        </select>
-        <input id="search-input" type="search" placeholder="Search meals..." />
-        <select id="ingredient-filter"><option value="">Filter ingredient</option></select>
+    <!-- Top bar (home only) -->
+    <header class="topbar" id="topbar">
+      <div class="topbar-left">
+        <h1>Cook<span>Book</span></h1>
+      </div>
+      <div class="topbar-right" id="home-controls">
+        <button class="icon-btn" id="sort-btn" title="Sort">⇅</button>
+        <button class="icon-btn" id="search-btn" title="Search">🔍</button>
       </div>
     </header>
 
+    <!-- Search bar (hidden by default) -->
+    <div class="search-bar hidden" id="search-bar">
+      <input type="search" id="search-input" placeholder="Search meals…" />
+    </div>
+
+    <!-- Sort sheet -->
+    <div class="sort-sheet hidden" id="sort-sheet">
+      <button data-sort="random" class="sort-opt active">🎲 Random</button>
+      <button data-sort="date" class="sort-opt">📅 Newest</button>
+      <button data-sort="rating" class="sort-opt">⭐ Top rated</button>
+      <button data-sort="az" class="sort-opt">🔤 A–Z</button>
+    </div>
+
+    <!-- Main content area -->
     <main id="app"></main>
 
+    <!-- Bottom navigation -->
     <nav class="bottom-nav">
-      <button data-tab="home"><span class="icon">🏠</span><span>Home</span></button>
-      <button data-tab="add"><span class="icon">➕</span><span>Add Meal</span></button>
-      <button data-tab="shopping"><span class="icon">🛒</span><span>Shopping</span></button>
-      <button data-tab="settings"><span class="icon">⚙️</span><span>Settings</span></button>
+      <button data-tab="home" class="nav-btn active">
+        <span class="nav-icon">⊞</span>
+        <span class="nav-label">Home</span>
+      </button>
+      <button data-tab="add" class="nav-btn">
+        <span class="nav-icon add-icon">+</span>
+        <span class="nav-label">Add</span>
+      </button>
+      <button data-tab="shopping" class="nav-btn">
+        <span class="nav-icon">🛒</span>
+        <span class="nav-label">Shopping</span>
+      </button>
+      <button data-tab="settings" class="nav-btn">
+        <span class="nav-icon">⚙</span>
+        <span class="nav-label">Settings</span>
+      </button>
     </nav>
 
-    <dialog id="meal-dialog"></dialog>
+    <!-- Meal detail modal -->
+    <div class="modal-overlay hidden" id="detail-overlay">
+      <div class="modal" id="detail-modal"></div>
+    </div>
+
     <script src="app.js" defer></script>
   </body>
 </html>

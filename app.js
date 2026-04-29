@@ -1,83 +1,940 @@
-const DB_NAME='cookingJournalDB',DB_VER=1,STORE='state';
-const MODULES=['protein','base','vegetable','sauce'];
-const emoji={protein:'🥩',base:'🍝',vegetable:'🥦',sauce:'🫙'};
-const app=document.getElementById('app');const dlg=document.getElementById('meal-dialog');
-let state={meals:[],ingredientLibrary:{protein:[],base:[],vegetable:[],sauce:[]},shoppingList:[]};
-let view='home',editingId=null,deferredPrompt=null;
+/* ─────────────────────────────────────────
+   CookBook — app.js
+   ───────────────────────────────────────── */
 
-const openDB=()=>new Promise((res,rej)=>{const r=indexedDB.open(DB_NAME,DB_VER);r.onupgradeneeded=()=>r.result.createObjectStore(STORE);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});
-async function loadState(){const db=await openDB();const tx=db.transaction(STORE,'readonly');const req=tx.objectStore(STORE).get('appState');return new Promise(ok=>{req.onsuccess=()=>ok(req.result||state);req.onerror=()=>ok(state)});}
-async function saveState(){const db=await openDB();const tx=db.transaction(STORE,'readwrite');tx.objectStore(STORE).put(state,'appState');}
-const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now()+Math.random()+'';
-const ratingColor=r=>r<=3?'#4FC3F7':r<=6?'#FFD54F':r<=8?'#FFB74D':'#EF5350';
-const shuffle=a=>[...a].sort(()=>Math.random()-.5);
-const mealPhoto=(m)=>m.photo||m.image||m.imageUrl||m.photoUrl||'';
+const DB_NAME = 'cookbookDB';
+const DB_VER  = 2;
+const STORE   = 'state';
 
-function ensureInstallButton(){
-  let btn=document.getElementById('install-app-btn');
-  if(!btn){
-    btn=document.createElement('button');
-    btn.id='install-app-btn';
-    btn.textContent='Install';
-    btn.style.display='none';
-    document.querySelector('.topbar').appendChild(btn);
-  }
-  btn.onclick=async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;btn.style.display='none';};
+// ── Default state ──
+const DEFAULT_STATE = {
+  meals: [],
+  modules: [
+    { id: 'protein',   name: 'Protein',   emoji: '🥩', ingredients: [] },
+    { id: 'base',      name: 'Base',      emoji: '🍝', ingredients: [] },
+    { id: 'vegetable', name: 'Vegetable', emoji: '🥦', ingredients: [] },
+    { id: 'sauce',     name: 'Sauce',     emoji: '🫙', ingredients: [] },
+  ],
+  shoppingList: [],
+};
+
+let state = JSON.parse(JSON.stringify(DEFAULT_STATE));
+let view  = 'home';
+let sortMode = 'random';
+let searchOpen = false;
+let sortOpen = false;
+let deferredPrompt = null;
+
+// ── Wizard state (not persisted) ──
+let wizard = {
+  active: false,
+  editingId: null,
+  photo: '',       // base64
+  name: '',
+  selections: {},  // { moduleId: [ingr, ...] }
+  rating: 7,
+  note: '',
+  steps: [],       // built dynamically
+  stepIndex: 0,
+};
+
+/* ─── IndexedDB ─── */
+const openDB = () => new Promise((res, rej) => {
+  const r = indexedDB.open(DB_NAME, DB_VER);
+  r.onupgradeneeded = () => {
+    const db = r.result;
+    if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
+  };
+  r.onsuccess = () => res(r.result);
+  r.onerror   = () => rej(r.error);
+});
+
+async function loadState() {
+  const db  = await openDB();
+  const tx  = db.transaction(STORE, 'readonly');
+  const req = tx.objectStore(STORE).get('appState');
+  return new Promise(ok => {
+    req.onsuccess = () => {
+      const saved = req.result;
+      if (saved) {
+        // Merge — keep defaults for missing keys
+        state = Object.assign(JSON.parse(JSON.stringify(DEFAULT_STATE)), saved);
+      }
+      ok();
+    };
+    req.onerror = () => ok();
+  });
 }
 
+async function saveState() {
+  const db = await openDB();
+  const tx = db.transaction(STORE, 'readwrite');
+  tx.objectStore(STORE).put(state, 'appState');
+  return new Promise(ok => { tx.oncomplete = ok; });
+}
 
-function bindNav(){document.querySelectorAll('.bottom-nav button').forEach(b=>{b.classList.toggle('active',b.dataset.tab===view);b.onclick=()=>{view=b.dataset.tab;render();};});}
-function ingredientsFlat(m){if(typeof m.ingredients==='string')return m.ingredients.split(',').map(s=>s.trim()).filter(Boolean);return MODULES.flatMap(k=>m.ingredients[k]||[])}
-function renderHome(){const s=document.getElementById('sort-select').value,q=document.getElementById('search-input').value.toLowerCase(),f=document.getElementById('ingredient-filter').value;let meals=[...state.meals].filter(m=>m.name.toLowerCase().includes(q)&&(!f||ingredientsFlat(m).includes(f)));
-if(s==='random') meals=shuffle(meals); if(s==='date') meals.sort((a,b)=>b.date.localeCompare(a.date)); if(s==='rating') meals.sort((a,b)=>b.rating-a.rating); if(s==='az') meals.sort((a,b)=>a.name.localeCompare(b.name));
-app.innerHTML=`<div class='meal-grid'>${meals.map(m=>`<article class='card' data-id='${m.id}'><div class='card-media'><img src='${mealPhoto(m)}' alt='${m.name} photo' loading='lazy' onerror="this.style.display=\'none\'"><div class='card-overlay'><h3>${m.name}</h3><span class='rating-pill' style='background:${ratingColor(m.rating)}'>${m.rating}/10</span></div></div></article>`).join('')||"<div class='empty-state'><span class='empty-icon'>🍽️</span><p>No meals logged yet.<br>Tap <b>+ Add Meal</b> to get started.</p></div>"}</div>`;
-app.querySelectorAll('.card').forEach(c=>c.onclick=()=>openDetail(c.dataset.id));}
-function moduleEditor(module,sel=[]){const all=state.ingredientLibrary[module]||[];return `<details class='module' open><summary>${emoji[module]} ${module}</summary><input data-add='${module}' placeholder='Add/search ingredient'><div class='chips'>${all.map(i=>`<span class='chip ${sel.includes(i)?'selected':''}' data-mod='${module}' data-ing='${i}'>${i}</span>`).join('')}</div></details>`}
-function renderAdd(){const m=editingId?state.meals.find(x=>x.id===editingId):null;const mode=m?.mode||'simple';
-app.innerHTML=`<form id='meal-form'>
-<div class='form-section'><h3>1) Photo & Name</h3><input id='photo' type='file' accept='image/*' capture='environment'><input id='name' required placeholder='Meal name' value='${m?.name||''}'></div>
-<div class='form-section'><h3>2) Ingredients Mode</h3><select id='mode'><option value='simple' ${mode==='simple'?'selected':''}>Simple</option><option value='module' ${mode==='module'?'selected':''}>Module</option></select>
-<div id='simple-wrap'><textarea id='simple-ingredients' rows='4' placeholder='salt, pepper, ...'>${typeof m?.ingredients==='string'?m.ingredients:''}</textarea></div>
-<div id='module-wrap' class='${mode==='module'?'':'hidden'}'>${MODULES.map(k=>moduleEditor(k,m?.mode==='module'?m.ingredients[k]:[])).join('')}</div></div>
-<div class='form-section'><h3>3) Rating & Note</h3><input id='rating' type='range' min='1' max='10' value='${m?.rating||5}'><span id='rating-v'></span><textarea id='note' rows='3' placeholder='Notes'>${m?.note||''}</textarea></div>
-<button>Save Meal</button></form>`;
-const rating=app.querySelector('#rating'),label=app.querySelector('#rating-v');const paint=()=>{const c=ratingColor(+rating.value);rating.style.accentColor=c;label.textContent=`${rating.value}/10`;label.style.color=c};rating.oninput=paint;paint();
-app.querySelector('#mode').onchange=e=>{app.querySelector('#simple-wrap').classList.toggle('hidden',e.target.value!=='simple');app.querySelector('#module-wrap').classList.toggle('hidden',e.target.value!=='module');};
-app.querySelectorAll('[data-add]').forEach(i=>i.onchange=e=>{const mod=e.target.dataset.add,val=e.target.value.trim().toLowerCase();if(val&&!state.ingredientLibrary[mod].includes(val)){state.ingredientLibrary[mod].push(val);saveState().then(render);} });
-app.querySelectorAll('.chip').forEach(ch=>ch.onclick=()=>ch.classList.toggle('selected'));
-app.querySelector('#meal-form').onsubmit=async e=>{e.preventDefault();const name=app.querySelector('#name').value.trim();const rate=+rating.value;if(!name||!rate) return alert('Name and rating required.');let photo=m?.photo||'';const f=app.querySelector('#photo').files[0];if(f) photo=await new Promise(ok=>{const r=new FileReader();r.onload=()=>ok(r.result);r.readAsDataURL(f)});
-const md=app.querySelector('#mode').value;let ingredients=app.querySelector('#simple-ingredients').value.trim();if(md==='module'){ingredients={};MODULES.forEach(mod=>ingredients[mod]=[...app.querySelectorAll(`.chip.selected[data-mod='${mod}']`)].map(x=>x.dataset.ing));}
-const meal={id:m?.id||uid(),name,photo,date:m?.date||new Date().toISOString().slice(0,10),mode:md,ingredients,rating:rate,note:app.querySelector('#note').value.trim()};if(m){state.meals=state.meals.map(x=>x.id===m.id?meal:x);}else state.meals.push(meal);await saveState();editingId=null;view='home';render();};}
-function openDetail(id){const m=state.meals.find(x=>x.id===id);if(!m)return;
-const photo=mealPhoto(m);
-const photoHtml=photo?"<img class='dialog-photo' src='"+photo+"' alt='"+m.name+"'>": "<div class='dialog-photo' style='background:var(--surface);display:flex;align-items:center;justify-content:center;font-size:4rem;opacity:.2'>🍽️</div>";
-const ingrHtml=typeof m.ingredients==='string'
-  ?"<div class='dialog-ingredients'><h4>Ingredients</h4><p style='font-size:.9rem'>"+(m.ingredients||'—')+"</p></div>"
-  :"<div class='dialog-ingredients'><h4>Ingredients</h4>"+MODULES.map(k=>(m.ingredients[k]||[]).length?"<div class='dialog-module-row'><span class='dialog-module-label'>"+emoji[k]+" "+k+"</span><span>"+(m.ingredients[k].join(', '))+"</span></div>":"").join('')+"</div>";
-const noteHtml=m.note?"<p class='dialog-note'>&ldquo;"+m.note+"&rdquo;</p>":"";
-dlg.innerHTML=photoHtml+"<div class='dialog-body'><h2>"+m.name+"</h2><div class='dialog-meta'><span class='dialog-date'>📅 "+m.date+"</span><span class='rating-pill' style='background:"+ratingColor(m.rating)+"'>"+m.rating+"/10</span></div>"+ingrHtml+noteHtml+"<div class='dialog-actions'><button id='edit'>✏️ Edit</button><button id='btn-delete-dialog'>🗑 Delete</button><button id='dlg-close'>✕ Close</button></div></div>";
-dlg.showModal();
-dlg.querySelector("#dlg-close").onclick=()=>dlg.close();
-dlg.querySelector("#edit").onclick=()=>{editingId=id;view="add";dlg.close();render();};
-dlg.querySelector("#btn-delete-dialog").onclick=async()=>{if(confirm("Delete meal?")){state.meals=state.meals.filter(x=>x.id!==id);await saveState();dlg.close();render();}}}
-function renderShopping(){const byDay={};state.shoppingList.forEach((g,gi)=>{(byDay[g.day]??=[]).push({g,gi});});app.innerHTML=`<div class='form-section'><h3>Plan a meal</h3><select id='mealPick'><option value=''>Select meal</option>${state.meals.map(m=>`<option value='${m.id}'>${m.name}</option>`)}</select><input id='dayPick' placeholder='Day (e.g. Monday)'><button id='planAdd' type='button'>Add planned meal</button></div>
-<div class='form-section'><h3>Manual add</h3><input id='mDay' placeholder='Day'><input id='mMeal' placeholder='Meal name'><input id='mItem' placeholder='Ingredient'><button id='mAdd' type='button'>Add item</button></div>
-${Object.entries(byDay).map(([day,groups])=>`<div class='shopping-group'><h4>📅 ${day}</h4>${groups.map(({g,gi})=>`<p>🍽️ ${g.meal}</p>${g.items.map((it,ii)=>`<label class='${it.checked?'line-through':''}'><input type='checkbox' data-gi='${gi}' data-ii='${ii}' ${it.checked?'checked':''}> ${it.name}</label><br>`).join('')}`).join('')}</div>`).join('')}
-<button id='clear'>Clear list</button>`;
-app.querySelectorAll("input[type='checkbox']").forEach(c=>c.onchange=async e=>{const g=state.shoppingList[e.target.dataset.gi],it=g.items[e.target.dataset.ii];it.checked=e.target.checked;await saveState();render();});
-app.querySelector('#planAdd').onclick=async()=>{const id=app.querySelector('#mealPick').value,day=app.querySelector('#dayPick').value.trim();const meal=state.meals.find(m=>m.id===id);if(!meal||!day)return;state.shoppingList.push({day,meal:meal.name,items:ingredientsFlat(meal).map(n=>({name:n,checked:false}))});await saveState();render();};
-app.querySelector('#mAdd').onclick=async()=>{const day=app.querySelector('#mDay').value.trim(),meal=app.querySelector('#mMeal').value.trim(),item=app.querySelector('#mItem').value.trim();if(!day||!meal||!item)return;let g=state.shoppingList.find(x=>x.day===day&&x.meal===meal);if(!g){g={day,meal,items:[]};state.shoppingList.push(g);}g.items.push({name:item,checked:false});await saveState();render();};
-app.querySelector('#clear').onclick=async()=>{if(confirm('Clear shopping list?')){state.shoppingList=[];await saveState();render();}};}
-function renderSettings(){app.innerHTML=`<section class='settings-group'><h3>Ingredient Library</h3>${MODULES.map(m=>`<div class='setting-row'><div class='setting-row-header'>${m}</div><div class='setting-chips'>${(state.ingredientLibrary[m]||[]).map((i,idx)=>`<span class='chip'>${i} <button data-del='${m}:${idx}'>x</button></span>`).join('')}</div><div><input id='add-${m}' placeholder='Add ${m}'><button data-addm='${m}'>Add</button></div></div>`).join('')}</section>
-<section class='settings-group'><h3>Data</h3><button id='export'>Export JSON</button><input id='import' type='file' accept='application/json'></section>
-<section class='settings-group'><h3>About</h3><p>Version 1.0.0</p><p class='small'>Offline-first personal cooking journal PWA.</p></section>`;
-app.querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{const [m,i]=b.dataset.del.split(':');state.ingredientLibrary[m].splice(+i,1);await saveState();render();});
-app.querySelectorAll('[data-addm]').forEach(b=>b.onclick=async()=>{const m=b.dataset.addm,v=app.querySelector(`#add-${m}`).value.trim().toLowerCase();if(v&&!state.ingredientLibrary[m].includes(v)){state.ingredientLibrary[m].push(v);await saveState();render();}});
-app.querySelector('#export').onclick=()=>{const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='cooking-journal-export.json';a.click();};
-app.querySelector('#import').onchange=async e=>{const f=e.target.files[0];if(!f)return;state=JSON.parse(await f.text());await saveState();render();};}
-function render(){bindNav();document.getElementById('home-controls').style.display=view==='home'?'flex':'none';const ingSet=[...new Set(state.meals.flatMap(ingredientsFlat))].sort();const sel=document.getElementById('ingredient-filter');sel.innerHTML=`<option value=''>Filter ingredient</option>${ingSet.map(i=>`<option>${i}</option>`).join('')}`;if(view==='home')renderHome();if(view==='add')renderAdd();if(view==='shopping')renderShopping();if(view==='settings')renderSettings();}
+/* ─── Helpers ─── */
+const uid = () => crypto.randomUUID ? crypto.randomUUID() : Date.now() + '' + Math.random();
 
-['sort-select','search-input','ingredient-filter'].forEach(id=>document.getElementById(id).addEventListener('input',()=>view==='home'&&renderHome()));
-window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;const b=document.getElementById('install-app-btn');if(b)b.style.display='inline-block';});
-if('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('/sw.js'));
-(async()=>{ensureInstallButton();state=await loadState();render();})();
+const ratingColor = r =>
+  r <= 3 ? '#60a5fa' :
+  r <= 6 ? '#fbbf24' :
+  r <= 8 ? '#f97316' : '#ef4444';
+
+const ratingLabel = r =>
+  r <= 2 ? 'Terrible' :
+  r <= 4 ? 'Not great' :
+  r <= 6 ? 'Decent' :
+  r <= 8 ? 'Good' :
+  r <= 9 ? 'Great' : '🔥 Perfect';
+
+const shuffle = a => [...a].sort(() => Math.random() - 0.5);
+
+function getModuleById(id) {
+  return state.modules.find(m => m.id === id);
+}
+
+function ingredientsFlat(meal) {
+  const sel = meal.selections || {};
+  return Object.values(sel).flat();
+}
+
+/* ─── Render dispatcher ─── */
+function render() {
+  updateNav();
+  updateTopbar();
+  if (wizard.active) return; // wizard handles its own rendering
+  const app = document.getElementById('app');
+  if (view === 'home')     renderHome(app);
+  if (view === 'shopping') renderShopping(app);
+  if (view === 'settings') renderSettings(app);
+  if (view === 'add')      startWizard(null);
+}
+
+function updateNav() {
+  document.querySelectorAll('.nav-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === view);
+  });
+}
+
+function updateTopbar() {
+  const topbar = document.getElementById('topbar');
+  const homeControls = document.getElementById('home-controls');
+  if (view === 'home') {
+    topbar.classList.remove('hidden');
+    homeControls.classList.remove('hidden');
+  } else if (wizard.active) {
+    topbar.classList.add('hidden');
+    homeControls.classList.add('hidden');
+  } else {
+    topbar.classList.remove('hidden');
+    homeControls.classList.add('hidden');
+  }
+}
+
+/* ─── HOME ─── */
+function renderHome(app) {
+  const q = (document.getElementById('search-input')?.value || '').toLowerCase();
+
+  let meals = [...state.meals].filter(m =>
+    !q || m.name.toLowerCase().includes(q)
+  );
+
+  if (sortMode === 'random') meals = shuffle(meals);
+  if (sortMode === 'date')   meals.sort((a, b) => b.date.localeCompare(a.date));
+  if (sortMode === 'rating') meals.sort((a, b) => b.rating - a.rating);
+  if (sortMode === 'az')     meals.sort((a, b) => a.name.localeCompare(b.name));
+
+  if (!meals.length) {
+    app.innerHTML = `
+      <div class="empty-state">
+        <span class="empty-icon">🍽️</span>
+        <h2>No meals yet</h2>
+        <p>Tap <strong>+</strong> to log your first meal</p>
+      </div>`;
+    return;
+  }
+
+  app.innerHTML = `<div class="album-grid">${meals.map(m => {
+    const photo = m.photo || '';
+    const color = ratingColor(m.rating);
+    return `<div class="album-card" data-id="${m.id}">
+      <div class="album-placeholder">🍽️</div>
+      ${photo ? `<img src="${photo}" alt="${m.name}" loading="lazy" onerror="this.style.display='none'">` : ''}
+      <div class="album-overlay">
+        <div class="album-name">${m.name}</div>
+        <span class="album-rating" style="background:${color}">${m.rating}/10</span>
+      </div>
+    </div>`;
+  }).join('')}</div>`;
+
+  app.querySelectorAll('.album-card').forEach(c =>
+    c.addEventListener('click', () => openDetail(c.dataset.id))
+  );
+}
+
+/* ─── DETAIL MODAL ─── */
+function openDetail(id) {
+  const m = state.meals.find(x => x.id === id);
+  if (!m) return;
+
+  const overlay = document.getElementById('detail-overlay');
+  const modal   = document.getElementById('detail-modal');
+  const color   = ratingColor(m.rating);
+  const sel     = m.selections || {};
+
+  const modulesHtml = state.modules
+    .filter(mod => (sel[mod.id] || []).length > 0)
+    .map(mod => `
+      <div class="modal-module-row">
+        <span class="modal-module-label">${mod.emoji} ${mod.name}</span>
+        <span>${sel[mod.id].join(', ')}</span>
+      </div>`)
+    .join('');
+
+  modal.innerHTML = `
+    ${m.photo
+      ? `<img class="modal-photo" src="${m.photo}" alt="${m.name}">`
+      : `<div class="modal-photo-placeholder">🍽️</div>`}
+    <div class="modal-body">
+      <h2 class="modal-title">${m.name}</h2>
+      <div class="modal-meta">
+        <span class="modal-date">📅 ${m.date}</span>
+        <span class="album-rating" style="background:${color}">${m.rating}/10</span>
+      </div>
+      ${modulesHtml ? `<div class="modal-section">
+        <div class="modal-section-title">Ingredients</div>
+        ${modulesHtml}
+      </div>` : ''}
+      ${m.note ? `<div class="modal-section">
+        <div class="modal-section-title">Notes</div>
+        <p class="modal-note">"${m.note}"</p>
+      </div>` : ''}
+    </div>
+    <div class="modal-actions">
+      <button class="btn-edit" id="modal-edit">✏️ Edit</button>
+      <button class="btn-delete" id="modal-delete">🗑</button>
+      <button class="btn-close" id="modal-close">✕</button>
+    </div>`;
+
+  overlay.classList.remove('hidden');
+
+  modal.querySelector('#modal-close').onclick  = closeDetail;
+  overlay.addEventListener('click', e => { if (e.target === overlay) closeDetail(); });
+
+  modal.querySelector('#modal-edit').onclick = () => {
+    closeDetail();
+    startWizard(id);
+  };
+
+  modal.querySelector('#modal-delete').onclick = async () => {
+    if (!confirm('Delete this meal?')) return;
+    state.meals = state.meals.filter(x => x.id !== id);
+    await saveState();
+    closeDetail();
+    renderHome(document.getElementById('app'));
+  };
+}
+
+function closeDetail() {
+  document.getElementById('detail-overlay').classList.add('hidden');
+}
+
+/* ─── WIZARD ─── */
+function buildWizardSteps() {
+  // Always: photo, name
+  // Then one step per module that has ingredients
+  // Then: rating, note
+  const steps = ['photo', 'name'];
+  state.modules.forEach(mod => {
+    if (mod.ingredients.length > 0) steps.push('module:' + mod.id);
+  });
+  steps.push('rating', 'note');
+  return steps;
+}
+
+function startWizard(editId) {
+  wizard.active    = true;
+  wizard.editingId = editId;
+  wizard.steps     = buildWizardSteps();
+  wizard.stepIndex = 0;
+
+  if (editId) {
+    const m = state.meals.find(x => x.id === editId);
+    if (m) {
+      wizard.photo      = m.photo || '';
+      wizard.name       = m.name || '';
+      wizard.selections = JSON.parse(JSON.stringify(m.selections || {}));
+      wizard.rating     = m.rating || 7;
+      wizard.note       = m.note || '';
+    }
+  } else {
+    wizard.photo      = '';
+    wizard.name       = '';
+    wizard.selections = {};
+    wizard.rating     = 7;
+    wizard.note       = '';
+  }
+
+  renderWizard();
+  updateTopbar();
+}
+
+function renderWizard() {
+  const app = document.getElementById('app');
+
+  // Build wizard shell
+  const totalSteps = wizard.steps.length;
+  const dotsHtml = wizard.steps.map((_, i) => {
+    const cls = i === wizard.stepIndex ? 'active' : i < wizard.stepIndex ? 'done' : '';
+    return `<div class="wizard-dot ${cls}"></div>`;
+  }).join('');
+
+  app.innerHTML = `
+    <div class="wizard" id="wizard">
+      <div class="wizard-header">
+        <button class="wizard-back" id="wiz-back">←</button>
+        <div class="wizard-progress">${dotsHtml}</div>
+        <button class="wizard-skip" id="wiz-skip">Skip</button>
+      </div>
+      <div class="wizard-body" id="wiz-body"></div>
+      <div class="wizard-footer">
+        <button class="btn-next" id="wiz-next">Continue</button>
+      </div>
+    </div>`;
+
+  document.getElementById('wiz-back').onclick = wizardBack;
+  document.getElementById('wiz-skip').onclick = wizardSkip;
+  document.getElementById('wiz-next').onclick = wizardNext;
+
+  renderWizardStep();
+}
+
+function renderWizardStep() {
+  const body     = document.getElementById('wiz-body');
+  const nextBtn  = document.getElementById('wiz-next');
+  const skipBtn  = document.getElementById('wiz-skip');
+  const stepKey  = wizard.steps[wizard.stepIndex];
+  const isLast   = wizard.stepIndex === wizard.steps.length - 1;
+
+  // Update dots
+  document.querySelectorAll('.wizard-dot').forEach((d, i) => {
+    d.className = 'wizard-dot' +
+      (i === wizard.stepIndex ? ' active' : i < wizard.stepIndex ? ' done' : '');
+  });
+
+  nextBtn.textContent = isLast ? '💾 Save meal' : 'Continue';
+  skipBtn.classList.toggle('hidden', stepKey === 'photo' || stepKey === 'rating');
+
+  body.innerHTML = buildStepHTML(stepKey);
+  bindStepEvents(stepKey);
+
+  // Animate in
+  const step = body.querySelector('.wizard-step');
+  if (step) {
+    step.style.opacity = '0';
+    step.style.transform = 'translateX(30px)';
+    requestAnimationFrame(() => {
+      step.style.transition = 'all 0.25s cubic-bezier(0.4,0,0.2,1)';
+      step.style.opacity = '1';
+      step.style.transform = 'translateX(0)';
+    });
+  }
+}
+
+function buildStepHTML(stepKey) {
+  if (stepKey === 'photo') {
+    const hasPhoto = !!wizard.photo;
+    return `<div class="wizard-step active">
+      <div class="step-label">Step ${wizard.stepIndex + 1}</div>
+      <div class="step-title">Add a photo</div>
+      <div class="photo-area" id="photo-area">
+        ${hasPhoto
+          ? `<img src="${wizard.photo}" alt="meal photo" id="photo-preview">`
+          : `<div class="photo-placeholder">
+               <div class="ph-icon">📸</div>
+               <p>Tap to take or pick a photo</p>
+             </div>`}
+        <input type="file" id="photo-input" accept="image/*" capture="environment">
+        ${hasPhoto ? `<button class="photo-change" id="photo-change-btn">Change photo</button>` : ''}
+      </div>
+    </div>`;
+  }
+
+  if (stepKey === 'name') {
+    return `<div class="wizard-step active">
+      <div class="step-label">Step ${wizard.stepIndex + 1}</div>
+      <div class="step-title">What did you cook?</div>
+      <input class="name-input-big" id="name-input" type="text"
+        placeholder="Meal name…" value="${wizard.name}" autocomplete="off" autocapitalize="words">
+    </div>`;
+  }
+
+  if (stepKey.startsWith('module:')) {
+    const modId = stepKey.split(':')[1];
+    const mod   = getModuleById(modId);
+    if (!mod) return '<div class="wizard-step active"></div>';
+    const selected = wizard.selections[modId] || [];
+
+    const itemsHtml = mod.ingredients.map(ing => {
+      const sel = selected.includes(ing);
+      return `<div class="ingredient-item ${sel ? 'selected' : ''}" data-ing="${ing}">
+        <div class="ingredient-check">${sel ? '✓' : ''}</div>
+        <span>${ing}</span>
+      </div>`;
+    }).join('');
+
+    return `<div class="wizard-step active">
+      <div class="step-label">Step ${wizard.stepIndex + 1}</div>
+      <span class="module-step-emoji">${mod.emoji}</span>
+      <div class="step-title">${mod.name}</div>
+      <div class="ingredient-list" id="ingredient-list">${itemsHtml}</div>
+      <div class="add-ingredient-row">
+        <input type="text" id="new-ing-input" placeholder="Add ingredient…" autocapitalize="words">
+        <button id="new-ing-btn">Add</button>
+      </div>
+    </div>`;
+  }
+
+  if (stepKey === 'rating') {
+    const r     = wizard.rating;
+    const color = ratingColor(r);
+    return `<div class="wizard-step active">
+      <div class="step-label">Step ${wizard.stepIndex + 1}</div>
+      <div class="step-title">Rate it</div>
+      <div class="rating-display">
+        <div class="rating-number" id="rating-number" style="color:${color}">${r}</div>
+        <div class="rating-label" id="rating-label" style="color:${color}">${ratingLabel(r)}</div>
+      </div>
+      <div class="rating-slider-wrap">
+        <input type="range" class="big-slider" id="rating-slider"
+          min="1" max="10" value="${r}"
+          style="--track-color:${color}">
+      </div>
+      <div class="rating-ticks">
+        <span>1</span><span>5</span><span>10</span>
+      </div>
+    </div>`;
+  }
+
+  if (stepKey === 'note') {
+    return `<div class="wizard-step active">
+      <div class="step-label">Step ${wizard.stepIndex + 1}</div>
+      <div class="step-title">Any notes?</div>
+      <textarea class="note-textarea" id="note-input"
+        placeholder="Too salty? Perfect balance? What would you change…"
+        rows="6">${wizard.note}</textarea>
+    </div>`;
+  }
+
+  return '<div class="wizard-step active"></div>';
+}
+
+function bindStepEvents(stepKey) {
+  if (stepKey === 'photo') {
+    const area   = document.getElementById('photo-area');
+    const input  = document.getElementById('photo-input');
+    const change = document.getElementById('photo-change-btn');
+
+    const triggerPick = () => input.click();
+    area.addEventListener('click', e => {
+      if (e.target === change) return;
+      triggerPick();
+    });
+    if (change) change.addEventListener('click', triggerPick);
+
+    input.addEventListener('change', async e => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = ev => {
+        wizard.photo = ev.target.result;
+        // Update preview without re-rendering whole step
+        const area = document.getElementById('photo-area');
+        area.innerHTML = `
+          <img src="${wizard.photo}" alt="meal photo" id="photo-preview">
+          <input type="file" id="photo-input" accept="image/*" capture="environment">
+          <button class="photo-change" id="photo-change-btn">Change photo</button>`;
+        bindStepEvents('photo');
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  if (stepKey === 'name') {
+    const input = document.getElementById('name-input');
+    input.addEventListener('input', e => { wizard.name = e.target.value; });
+    setTimeout(() => input.focus(), 50);
+  }
+
+  if (stepKey.startsWith('module:')) {
+    const modId = stepKey.split(':')[1];
+    if (!wizard.selections[modId]) wizard.selections[modId] = [];
+
+    document.querySelectorAll('.ingredient-item').forEach(el => {
+      el.addEventListener('click', () => {
+        const ing = el.dataset.ing;
+        const arr = wizard.selections[modId];
+        const idx = arr.indexOf(ing);
+        if (idx === -1) arr.push(ing);
+        else arr.splice(idx, 1);
+
+        const sel = arr.includes(ing) || idx === -1 && arr.includes(ing);
+        const isNowSelected = wizard.selections[modId].includes(ing);
+        el.classList.toggle('selected', isNowSelected);
+        el.querySelector('.ingredient-check').textContent = isNowSelected ? '✓' : '';
+      });
+    });
+
+    const addBtn = document.getElementById('new-ing-btn');
+    const addInput = document.getElementById('new-ing-input');
+
+    addBtn.addEventListener('click', async () => {
+      const val = addInput.value.trim().toLowerCase();
+      if (!val) return;
+      const mod = getModuleById(modId);
+      if (!mod.ingredients.includes(val)) {
+        mod.ingredients.push(val);
+        await saveState();
+      }
+      if (!wizard.selections[modId].includes(val)) {
+        wizard.selections[modId].push(val);
+      }
+      addInput.value = '';
+
+      // Add to list visually
+      const list = document.getElementById('ingredient-list');
+      const el = document.createElement('div');
+      el.className = 'ingredient-item selected';
+      el.dataset.ing = val;
+      el.innerHTML = `<div class="ingredient-check">✓</div><span>${val}</span>`;
+      el.addEventListener('click', () => {
+        const arr = wizard.selections[modId];
+        const idx = arr.indexOf(val);
+        if (idx === -1) arr.push(val);
+        else arr.splice(idx, 1);
+        const isNow = wizard.selections[modId].includes(val);
+        el.classList.toggle('selected', isNow);
+        el.querySelector('.ingredient-check').textContent = isNow ? '✓' : '';
+      });
+      list.appendChild(el);
+    });
+
+    addInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); addBtn.click(); }
+    });
+  }
+
+  if (stepKey === 'rating') {
+    const slider = document.getElementById('rating-slider');
+    slider.addEventListener('input', e => {
+      const r = +e.target.value;
+      wizard.rating = r;
+      const color = ratingColor(r);
+      document.getElementById('rating-number').textContent = r;
+      document.getElementById('rating-number').style.color = color;
+      document.getElementById('rating-label').textContent = ratingLabel(r);
+      document.getElementById('rating-label').style.color = color;
+    });
+  }
+
+  if (stepKey === 'note') {
+    const ta = document.getElementById('note-input');
+    ta.addEventListener('input', e => { wizard.note = e.target.value; });
+  }
+}
+
+function wizardBack() {
+  if (wizard.stepIndex === 0) {
+    // Exit wizard
+    wizard.active = false;
+    view = 'home';
+    render();
+    return;
+  }
+  wizard.stepIndex--;
+  renderWizardStep();
+}
+
+function wizardSkip() {
+  wizardNext(true);
+}
+
+async function wizardNext(skip = false) {
+  const stepKey = wizard.steps[wizard.stepIndex];
+
+  // Validate current step
+  if (!skip) {
+    if (stepKey === 'name' && !wizard.name.trim()) {
+      const input = document.getElementById('name-input');
+      if (input) { input.style.borderColor = '#ef4444'; input.focus(); }
+      return;
+    }
+  }
+
+  const isLast = wizard.stepIndex === wizard.steps.length - 1;
+
+  if (isLast) {
+    await saveMeal();
+    return;
+  }
+
+  wizard.stepIndex++;
+  renderWizardStep();
+}
+
+async function saveMeal() {
+  const meal = {
+    id:         wizard.editingId || uid(),
+    name:       wizard.name.trim() || 'Unnamed meal',
+    photo:      wizard.photo,
+    date:       wizard.editingId
+                  ? (state.meals.find(x => x.id === wizard.editingId)?.date || new Date().toISOString().slice(0,10))
+                  : new Date().toISOString().slice(0,10),
+    selections: wizard.selections,
+    rating:     wizard.rating,
+    note:       wizard.note.trim(),
+  };
+
+  if (wizard.editingId) {
+    state.meals = state.meals.map(x => x.id === wizard.editingId ? meal : x);
+  } else {
+    state.meals.push(meal);
+  }
+
+  await saveState();
+  wizard.active    = false;
+  wizard.editingId = null;
+  view = 'home';
+  render();
+}
+
+/* ─── SHOPPING ─── */
+function renderShopping(app) {
+  const allMealOptions = state.meals
+    .map(m => `<option value="${m.id}">${m.name}</option>`)
+    .join('');
+
+  const listHtml = (() => {
+    if (!state.shoppingList.length) return '<p style="color:var(--text3);font-size:.88rem;padding:0 16px 8px">Your list is empty.</p>';
+    const byDay = {};
+    state.shoppingList.forEach((g, gi) => {
+      (byDay[g.day] = byDay[g.day] || []).push({ g, gi });
+    });
+    return Object.entries(byDay).map(([day, groups]) => `
+      <div class="day-group">
+        <div class="day-label">📅 ${day}</div>
+        ${groups.map(({ g, gi }) => `
+          <div class="meal-group">
+            <div class="meal-group-header">🍽️ ${g.meal}</div>
+            ${g.items.map((it, ii) => `
+              <div class="shop-item" data-gi="${gi}" data-ii="${ii}">
+                <input type="checkbox" ${it.checked ? 'checked' : ''} readonly>
+                <span class="shop-item-name ${it.checked ? 'done' : ''}">${it.name}</span>
+              </div>`).join('')}
+          </div>`).join('')}
+      </div>`).join('');
+  })();
+
+  app.innerHTML = `
+    <div class="page-header">
+      <h1 class="page-title">Shopping</h1>
+      <p class="page-subtitle">Plan meals and build your list</p>
+    </div>
+
+    <div class="section-card">
+      <h3>📋 Plan a meal</h3>
+      <div class="input-row" style="margin-bottom:8px">
+        <select id="meal-pick"><option value="">Select a meal…</option>${allMealOptions}</select>
+      </div>
+      <div class="input-row">
+        <input type="text" id="day-pick" placeholder="Day (e.g. Monday)">
+        <button class="btn-add-inline" id="plan-add">Add</button>
+      </div>
+    </div>
+
+    <div class="section-card">
+      <h3>✏️ Add manually</h3>
+      <div class="input-row" style="margin-bottom:8px">
+        <input type="text" id="m-day" placeholder="Day">
+        <input type="text" id="m-meal" placeholder="Meal name">
+      </div>
+      <div class="input-row">
+        <input type="text" id="m-item" placeholder="Ingredient">
+        <button class="btn-add-inline" id="m-add">Add</button>
+      </div>
+    </div>
+
+    ${listHtml}
+    ${state.shoppingList.length ? `<button class="btn-danger-full" id="clear-list">🗑 Clear list</button>` : ''}
+  `;
+
+  // Checkboxes
+  app.querySelectorAll('.shop-item').forEach(el => {
+    el.addEventListener('click', async () => {
+      const gi = +el.dataset.gi, ii = +el.dataset.ii;
+      state.shoppingList[gi].items[ii].checked = !state.shoppingList[gi].items[ii].checked;
+      await saveState();
+      renderShopping(app);
+    });
+  });
+
+  // Plan add
+  app.querySelector('#plan-add').addEventListener('click', async () => {
+    const id  = app.querySelector('#meal-pick').value;
+    const day = app.querySelector('#day-pick').value.trim();
+    const meal = state.meals.find(m => m.id === id);
+    if (!meal || !day) return;
+    const items = ingredientsFlat(meal).map(n => ({ name: n, checked: false }));
+    if (!items.length) return alert('This meal has no ingredients in its modules.');
+    state.shoppingList.push({ day, meal: meal.name, items });
+    await saveState();
+    renderShopping(app);
+  });
+
+  // Manual add
+  app.querySelector('#m-add').addEventListener('click', async () => {
+    const day  = app.querySelector('#m-day').value.trim();
+    const meal = app.querySelector('#m-meal').value.trim();
+    const item = app.querySelector('#m-item').value.trim();
+    if (!day || !meal || !item) return;
+    let g = state.shoppingList.find(x => x.day === day && x.meal === meal);
+    if (!g) { g = { day, meal, items: [] }; state.shoppingList.push(g); }
+    g.items.push({ name: item, checked: false });
+    await saveState();
+    renderShopping(app);
+  });
+
+  // Clear
+  app.querySelector('#clear-list')?.addEventListener('click', async () => {
+    if (!confirm('Clear the entire shopping list?')) return;
+    state.shoppingList = [];
+    await saveState();
+    renderShopping(app);
+  });
+}
+
+/* ─── SETTINGS ─── */
+function renderSettings(app) {
+  const modulesHtml = state.modules.map(mod => `
+    <div class="settings-module" id="mod-${mod.id}">
+      <div class="settings-module-header">
+        <span class="settings-module-name">
+          ${mod.emoji} ${mod.name}
+          <span class="settings-module-count">${mod.ingredients.length} items</span>
+        </span>
+        <span style="color:var(--text3);font-size:0.85rem">▼</span>
+      </div>
+      <div class="settings-module-body hidden" id="mod-body-${mod.id}">
+        <div class="settings-chip-list" id="chips-${mod.id}">
+          ${mod.ingredients.map((ing, idx) => `
+            <span class="settings-chip">
+              ${ing}
+              <button class="settings-chip-del" data-mod="${mod.id}" data-idx="${idx}">✕</button>
+            </span>`).join('')}
+        </div>
+        <div class="add-ingredient-row">
+          <input type="text" id="add-ing-${mod.id}" placeholder="Add ingredient…" autocapitalize="words">
+          <button data-addmod="${mod.id}">Add</button>
+        </div>
+        <button class="settings-del-module" data-delmod="${mod.id}">🗑 Delete this module</button>
+      </div>
+    </div>`).join('');
+
+  app.innerHTML = `
+    <div class="page-header">
+      <h1 class="page-title">Settings</h1>
+    </div>
+
+    ${modulesHtml}
+
+    <div class="new-module-card">
+      <h3>+ New module</h3>
+      <div class="input-row" style="margin-bottom:8px">
+        <input type="text" id="new-mod-emoji" placeholder="Emoji (e.g. 🥗)" style="max-width:80px;text-align:center">
+        <input type="text" id="new-mod-name" placeholder="Module name (e.g. Salad)" autocapitalize="words">
+      </div>
+      <button class="btn-add-inline" id="create-module" style="width:100%;margin-top:4px">Create module</button>
+    </div>
+
+    <div class="data-card">
+      <h3>Data</h3>
+      <div class="data-btns">
+        <button class="btn-secondary" id="export-btn">📤 Export</button>
+        <label class="btn-secondary" style="display:flex;align-items:center;justify-content:center;cursor:pointer">
+          📥 Import
+          <input type="file" id="import-input" accept="application/json" style="display:none">
+        </label>
+      </div>
+    </div>
+
+    <div class="about-card">
+      <div class="about-logo">Cook<span>Book</span></div>
+      <div class="about-version">Version 2.0 · Offline PWA</div>
+    </div>
+  `;
+
+  // Toggle module bodies
+  app.querySelectorAll('.settings-module-header').forEach(h => {
+    h.addEventListener('click', () => {
+      const body = h.nextElementSibling;
+      body.classList.toggle('hidden');
+      h.querySelector('span:last-child').textContent =
+        body.classList.contains('hidden') ? '▼' : '▲';
+    });
+  });
+
+  // Delete ingredient
+  app.querySelectorAll('.settings-chip-del').forEach(btn => {
+    btn.addEventListener('click', async e => {
+      e.stopPropagation();
+      const modId = btn.dataset.mod;
+      const idx   = +btn.dataset.idx;
+      const mod   = getModuleById(modId);
+      mod.ingredients.splice(idx, 1);
+      await saveState();
+      renderSettings(app);
+    });
+  });
+
+  // Add ingredient to module
+  app.querySelectorAll('[data-addmod]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const modId = btn.dataset.addmod;
+      const input = app.querySelector(`#add-ing-${modId}`);
+      const val   = input.value.trim().toLowerCase();
+      if (!val) return;
+      const mod = getModuleById(modId);
+      if (!mod.ingredients.includes(val)) {
+        mod.ingredients.push(val);
+        await saveState();
+        renderSettings(app);
+      }
+    });
+  });
+
+  // Delete module
+  app.querySelectorAll('[data-delmod]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const modId = btn.dataset.delmod;
+      if (!confirm('Delete this module and all its ingredients?')) return;
+      state.modules = state.modules.filter(m => m.id !== modId);
+      await saveState();
+      renderSettings(app);
+    });
+  });
+
+  // Create new module
+  app.querySelector('#create-module').addEventListener('click', async () => {
+    const emoji = app.querySelector('#new-mod-emoji').value.trim() || '📦';
+    const name  = app.querySelector('#new-mod-name').value.trim();
+    if (!name) return;
+    const newMod = {
+      id:          name.toLowerCase().replace(/\s+/g, '_') + '_' + Date.now(),
+      name:        name,
+      emoji:       emoji,
+      ingredients: [],
+    };
+    state.modules.push(newMod);
+    await saveState();
+    renderSettings(app);
+  });
+
+  // Export
+  app.querySelector('#export-btn').addEventListener('click', () => {
+    const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+    const a    = document.createElement('a');
+    a.href     = URL.createObjectURL(blob);
+    a.download = 'cookbook-export.json';
+    a.click();
+  });
+
+  // Import
+  app.querySelector('#import-input').addEventListener('change', async e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const imported = JSON.parse(await file.text());
+      state = Object.assign(JSON.parse(JSON.stringify(DEFAULT_STATE)), imported);
+      await saveState();
+      renderSettings(app);
+      alert('Import successful!');
+    } catch {
+      alert('Invalid file.');
+    }
+  });
+}
+
+/* ─── SORT & SEARCH ─── */
+document.getElementById('sort-btn').addEventListener('click', () => {
+  sortOpen = !sortOpen;
+  document.getElementById('sort-sheet').classList.toggle('hidden', !sortOpen);
+});
+
+document.getElementById('search-btn').addEventListener('click', () => {
+  searchOpen = !searchOpen;
+  const bar = document.getElementById('search-bar');
+  bar.classList.toggle('hidden', !searchOpen);
+  document.getElementById('app').classList.toggle('search-open', searchOpen);
+  if (searchOpen) setTimeout(() => bar.querySelector('input').focus(), 50);
+  else {
+    bar.querySelector('input').value = '';
+    renderHome(document.getElementById('app'));
+  }
+});
+
+document.querySelectorAll('.sort-opt').forEach(btn => {
+  btn.addEventListener('click', () => {
+    sortMode = btn.dataset.sort;
+    document.querySelectorAll('.sort-opt').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    sortOpen = false;
+    document.getElementById('sort-sheet').classList.add('hidden');
+    if (view === 'home') renderHome(document.getElementById('app'));
+  });
+});
+
+document.getElementById('search-input').addEventListener('input', () => {
+  if (view === 'home') renderHome(document.getElementById('app'));
+});
+
+// Close sort sheet on outside click
+document.addEventListener('click', e => {
+  if (sortOpen && !e.target.closest('#sort-sheet') && !e.target.closest('#sort-btn')) {
+    sortOpen = false;
+    document.getElementById('sort-sheet').classList.add('hidden');
+  }
+});
+
+/* ─── NAV ─── */
+document.querySelectorAll('.nav-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const tab = btn.dataset.tab;
+    if (tab === 'add') {
+      startWizard(null);
+      return;
+    }
+    wizard.active = false;
+    view = tab;
+    render();
+  });
+});
+
+/* ─── PWA INSTALL ─── */
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  deferredPrompt = e;
+});
+
+/* ─── SERVICE WORKER ─── */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () =>
+    navigator.serviceWorker.register('sw.js').catch(() => {})
+  );
+}
+
+/* ─── BOOT ─── */
+(async () => {
+  await loadState();
+  render();
+})();
